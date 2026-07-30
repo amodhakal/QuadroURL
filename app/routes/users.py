@@ -122,27 +122,28 @@ def get_user_cached(user_id):
 
 @users_bp.route("/users", methods=["POST"])
 def create_user():
+    data = request.get_json(silent=True)
+    if not data:
+        current_app.logger.warning("Invalid JSON received for create_user")
+        abort(400, description="Invalid JSON")
+
+    username = data.get("username")
+    email = data.get("email")
+
+    if not username or not isinstance(username, str) or not username.strip():
+        abort(400, description="username must be a non-empty string")
+    if not email or not isinstance(email, str) or not email.strip():
+        abort(400, description="email must be a non-empty string")
+
     try:
-        data = request.get_json(silent=True)
-        if not data:
-            current_app.logger.warning("Invalid JSON received for create_user")
-            abort(400, description="Invalid JSON")
-
-        username = data.get("username")
-        email = data.get("email")
-
-        if not username or not isinstance(username, str) or not username.strip():
-            abort(400, description="username must be a non-empty string")
-        if not email or not isinstance(email, str) or not email.strip():
-            abort(400, description="email must be a non-empty string")
-
         user = User.create(**data)
-        result = model_to_dict(user)
-        set_user(user.id, result)
-        return jsonify(result), 201
     except Exception as e:
         current_app.logger.exception(f"Failed to create user: {e}")
         abort(400, description=str(e))
+
+    result = model_to_dict(user)
+    set_user(user.id, result)
+    return jsonify(result), 201
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
