@@ -124,6 +124,8 @@ def create_app():
         request._start_time = time.time()
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
+
+        request._sample_psutil = getattr(request, "_sample_psutil", 0) + 1
         app.logger.info("Request received")
 
     @app.after_request
@@ -140,9 +142,10 @@ def create_app():
         if response.status_code >= 400:
             ERROR_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
 
-        process = psutil.Process(os.getpid())
-        CPU_USAGE.set(psutil.cpu_percent(interval=None))
-        MEMORY_USAGE_MB.set(round(process.memory_info().rss / 1024 / 1024, 1))
+        if getattr(request, "_sample_psutil", 0) % 10 == 0:
+            process = psutil.Process(os.getpid())
+            CPU_USAGE.set(psutil.cpu_percent(interval=None))
+            MEMORY_USAGE_MB.set(round(process.memory_info().rss / 1024 / 1024, 1))
 
         return response
 

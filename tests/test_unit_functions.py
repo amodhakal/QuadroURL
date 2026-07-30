@@ -10,38 +10,22 @@ from app.routes.urls import generate_short_code, format_url
 # generate_short_code(): Input = length, Output = alphanumeric string
 # ---------------------------------------------------------------------------
 
-@patch("app.routes.urls.Url")
-def test_generate_short_code_default_length(mock_url):
+def test_generate_short_code_default_length():
     """Input: no args. Output: 6-char alphanumeric string."""
-    mock_url.select.return_value.where.return_value.exists.return_value = False
     code = generate_short_code()
     assert len(code) == 6
     assert code.isalnum()
 
 
-@patch("app.routes.urls.Url")
-def test_generate_short_code_custom_length(mock_url):
+def test_generate_short_code_custom_length():
     """Input: length=10. Output: 10-char string."""
-    mock_url.select.return_value.where.return_value.exists.return_value = False
     code = generate_short_code(length=10)
     assert len(code) == 10
     assert code.isalnum()
 
 
-@patch("app.routes.urls.Url")
-def test_generate_short_code_retries_on_collision(mock_url):
-    """If first code already exists in DB, it retries until unique."""
-    exists_mock = mock_url.select.return_value.where.return_value.exists
-    exists_mock.side_effect = [True, True, False]
-    code = generate_short_code()
-    assert len(code) == 6
-    assert exists_mock.call_count == 3
-
-
-@patch("app.routes.urls.Url")
-def test_generate_short_code_produces_different_codes(mock_url):
+def test_generate_short_code_produces_different_codes():
     """Two calls should (almost certainly) produce different codes."""
-    mock_url.select.return_value.where.return_value.exists.return_value = False
     codes = {generate_short_code() for _ in range(20)}
     assert len(codes) > 1
 

@@ -1,5 +1,7 @@
 """Tests for the /urls endpoints."""
 
+from app.utils.events import flush_events
+
 
 # ---------------------------------------------------------------------------
 # POST /urls — Create a short URL
@@ -87,6 +89,7 @@ def test_create_url_records_event(client, sample_user):
         "original_url": "https://example.com/tracked",
         "title": "Tracked",
     })
+    flush_events()
     events_resp = client.get("/events")
     events = events_resp.get_json()
     assert len(events) >= 1
@@ -179,6 +182,7 @@ def test_update_url_no_body(client, sample_url):
 
 def test_update_url_records_event(client, sample_url):
     client.put(f"/urls/{sample_url.id}", json={"title": "Changed"})
+    flush_events()
     events_resp = client.get("/events")
     events = events_resp.get_json()
     updated_events = [e for e in events if e["event_type"] == "updated"]

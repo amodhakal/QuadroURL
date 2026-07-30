@@ -24,6 +24,8 @@ def app():
 @pytest.fixture(autouse=True)
 def clean_tables(app):
     """Wipe all rows before each test so tests are isolated."""
+    from app.utils.events import flush_events
+    flush_events()
     with app.app_context():
         db.execute_sql("DELETE FROM event")
         db.execute_sql("DELETE FROM url")

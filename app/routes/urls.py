@@ -9,22 +9,27 @@ from flask import (
     redirect as flask_redirect,
     request,
 )
+from peewee import IntegrityError
 from playhouse.shortcuts import model_to_dict
 
-from app.cache import delete_url, get_url, set_url
+from app.cache import (
+    delete_url,
+    get_url,
+    get_url_by_short_code,
+    get_user,
+    set_url,
+    set_url_by_short_code,
+)
 from app.models.url import Url
 from app.models.user import User
-from app.utils.events import create_event
+from app.utils.events import create_event_async as create_event
 
 
 urls_bp = Blueprint("urls", __name__)
 
 
 def generate_short_code(length=6):
-    while True:
-        code = "".join(random.choices(string.ascii_letters + string.digits, k=length))
-        if not Url.select().where(Url.short_code == code).exists():
-            return code
+    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 
 def format_url(url):
@@ -57,21 +62,25 @@ def create_url():
         current_app.logger.warning("title must be a string")
         abort(400, description="title must be a string")
 
-    try:
-        User.get_by_id(user_id)
-    except User.DoesNotExist:
+    if get_user(user_id) is None:
         current_app.logger.warning("User not found")
         abort(400, description="User not found")
 
-    short_code = generate_short_code()
-
-    url = Url.create(
-        user_id=user_id,
-        short_code=short_code,
-        original_url=original_url,
-        title=title,
-        is_active=True,
-    )
+    for _ in range(5):
+        short_code = generate_short_code()
+        try:
+            url = Url.create(
+                user_id=user_id,
+                short_code=short_code,
+                original_url=original_url,
+                title=title,
+                is_active=True,
+            )
+            break
+        except IntegrityError:
+            continue
+    else:
+        abort(500, description="Failed to generate unique short code")
 
     create_event(
         url.id,
@@ -89,6 +98,7 @@ def create_url():
 
     data = format_url(url)
     set_url(url.id, data)
+    set_url_by_short_code(short_code, data)
     return jsonify(data), 201
 
 
@@ -245,49 +255,47 @@ def delete_url(url_id):
 
 @urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])
 def redirect_short_code(short_code):
-    try:
-        url = Url.select().where(Url.short_code == short_code).get()
-    except Url.DoesNotExist:
+    data = get_url_by_short_code(short_code)
+    if data is None:
         current_app.logger.warning(f"Short code not found: {short_code}")
         abort(404)
 
-    if not url.is_active:
+    if not data.get("is_active", True):
         current_app.logger.warning(f"Short code inactive: {short_code}")
         abort(404)
 
     create_event(
-        url.id,
-        url.user_id,
+        data["id"],
+        data["user_id"],
         "click",
         {"short_code": short_code},
     )
 
     current_app.logger.info(
-        f"Redirecting short code {short_code} to {url.original_url}"
+        f"Redirecting short code {short_code} to {data['original_url']}"
     )
-    return flask_redirect(url.original_url)
+    return flask_redirect(data["original_url"])
 
 
 @urls_bp.route("/r/<short_code>", methods=["GET"])
 def redirect_short_code_legacy(short_code):
-    try:
-        url = Url.select().where(Url.short_code == short_code).get()
-    except Url.DoesNotExist:
+    data = get_url_by_short_code(short_code)
+    if data is None:
         current_app.logger.warning(f"Short code not found: {short_code}")
         abort(404)
 
-    if not url.is_active:
+    if not data.get("is_active", True):
         current_app.logger.warning(f"Short code inactive: {short_code}")
         abort(404)
 
     create_event(
-        url.id,
-        url.user_id,
+        data["id"],
+        data["user_id"],
         "click",
         {"short_code": short_code},
     )
 
     current_app.logger.info(
-        f"Redirecting short code {short_code} to {url.original_url}"
+        f"Redirecting short code {short_code} to {data['original_url']}"
     )
-    return jsonify({"url": url.original_url, "short_code": short_code})
+    return jsonify({"url": data["original_url"], "short_code": short_code})

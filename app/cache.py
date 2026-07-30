@@ -416,3 +416,59 @@ def delete_url(url_id):
 def clear_all_urls():
     _l1_clear("url:")
     _l2_fire_and_forget(lambda client: client.delete(*client.keys("url:*")))
+
+
+# ---------------------------------------------------------------------------
+# Short-code URL cache API
+# ---------------------------------------------------------------------------
+
+def get_url_by_short_code(short_code):
+    key = f"short_code:{short_code}"
+    value, is_stale = _l1_get(key)
+    if value is not None:
+        if value is _NEGATIVE_SENTINEL:
+            return None
+        if is_stale:
+            _background_refresh(key, lambda: _fetch_url_by_short_code(short_code), 300)
+        return value
+
+    def _read(client):
+        data = client.get(key)
+        return data
+
+    l2_data = _l2_safe(_read)
+    if l2_data is not None:
+        if l2_data == "null":
+            _l1_set(key, _NEGATIVE_SENTINEL, _NEGATIVE_CACHE_TTL)
+            return None
+        value = json.loads(l2_data)
+        _l1_set(key, value, 300)
+        return value
+
+    return _resolve_miss(key, lambda: _fetch_url_by_short_code(short_code), 300)
+
+
+def _fetch_url_by_short_code(short_code):
+    from app.models.url import Url
+    from playhouse.shortcuts import model_to_dict
+
+    try:
+        url = Url.select().where(Url.short_code == short_code).get()
+        data = model_to_dict(url, recurse=False)
+        data["user_id"] = data.pop("user")
+        return data
+    except Url.DoesNotExist:
+        return None
+
+
+def set_url_by_short_code(short_code, data, ttl=300):
+    key = f"short_code:{short_code}"
+    _l1_set(key, data, ttl)
+    payload = json.dumps(data, cls=_Encoder)
+    _l2_fire_and_forget(lambda client: client.setex(key, ttl, payload))
+
+
+def delete_url_by_short_code(short_code):
+    key = f"short_code:{short_code}"
+    _l1_delete(key)
+    _l2_fire_and_forget(lambda client: client.delete(key))

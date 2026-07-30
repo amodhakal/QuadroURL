@@ -3,9 +3,8 @@ import json
 from flask import Blueprint, abort, current_app, jsonify, request
 from playhouse.shortcuts import model_to_dict
 
+from app.cache import get_url, get_user
 from app.models.event import Event
-from app.models.url import Url
-from app.models.user import User
 
 
 events_bp = Blueprint("events", __name__)
@@ -89,15 +88,11 @@ def create_event():
         current_app.logger.warning("event_type must be a string")
         abort(400, description="event_type must be a string")
 
-    try:
-        Url.get_by_id(url_id)
-    except Url.DoesNotExist:
+    if get_url(url_id) is None:
         current_app.logger.warning("URL not found")
         abort(400, description="URL not found")
 
-    try:
-        User.get_by_id(user_id)
-    except User.DoesNotExist:
+    if get_user(user_id) is None:
         current_app.logger.warning("User not found")
         abort(400, description="User not found")
 
