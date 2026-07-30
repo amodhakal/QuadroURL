@@ -35,4 +35,7 @@ def init_db(app):
     @app.teardown_appcontext
     def _db_close(exc):
         if not db.is_closed():
-            db.close()
+            if exc is None:
+                db.commit()
+            else:
+                db.rollback()

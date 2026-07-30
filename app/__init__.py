@@ -126,7 +126,6 @@ def create_app():
         REQUESTS_IN_PROGRESS.inc()
 
         request._sample_psutil = getattr(request, "_sample_psutil", 0) + 1
-        app.logger.info("Request received")
 
     @app.after_request
     def track_metrics(response):
