@@ -160,7 +160,6 @@ def create_app():
 
     @app.errorhandler(404)
     def not_found(error):
-        app.logger.warning("Route not found")
         return jsonify({"error": "Not found"}), 404
 
     @app.errorhandler(422)

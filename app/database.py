@@ -31,6 +31,7 @@ def init_db(app):
     @app.before_request
     def _db_connect():
         db.connect(reuse_if_open=True)
+        db.begin()
 
     @app.teardown_appcontext
     def _db_close(exc):
