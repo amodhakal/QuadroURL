@@ -7,10 +7,12 @@
 #   - Waits for Postgres + app /health to be ready before starting load
 #   - Runs Locust headless at each concurrency level with a controlled spawn rate
 #   - Saves CSV results per level so runs are comparable apples-to-apples
+#   - Optionally runs Locust multi-process (--processes) so the load generator
+#     itself doesn't become the bottleneck at high user counts
 #
 # Usage:
 #   ./run_load_tests.sh
-#   ./run_load_tests.sh --levels 500,1000,2000 --spawn-rate 10 --run-time 3m
+#   ./run_load_tests.sh --levels 2000,3000,4000 --spawn-rate 100 --peak-time 60 --processes -1
 #
 # Requires: docker compose, uvx (or locust installed), curl
 
@@ -19,11 +21,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Defaults (override via flags)
 # ---------------------------------------------------------------------------
-LEVELS="500,1000,2000"
-SPAWN_RATE=10
+LEVELS="2000,3000,4000,5000"
+SPAWN_RATE=100
 RUN_TIME=""                        # if set (e.g. "3m"), used as a FIXED run-time for every level, overriding the auto-computed one below
-PEAK_TIME=240                       # seconds of steady-state load AFTER ramp-up completes, per level (only used when RUN_TIME is unset)
-HOST="http://127.0.0.1"        
+PEAK_TIME=60                       # seconds of steady-state load AFTER ramp-up completes, per level (only used when RUN_TIME is unset)
+PROCESSES="-1"                     # e.g. "-1" for auto (one worker per CPU core), or an explicit number. Empty = single-process (default Locust behavior)
+HOST="http://127.0.0.1"          # NOTE: no trailing slash, avoids //path bug
 LOCUST_FILE="scripts/test_locust.py"
 HEALTH_URL="${HOST}/health"
 RESULTS_DIR="loadtests/results_$(date +%Y%m%d_%H%M%S)"
@@ -39,15 +42,22 @@ while [[ $# -gt 0 ]]; do
     --spawn-rate) SPAWN_RATE="$2"; shift 2 ;;
     --run-time) RUN_TIME="$2"; shift 2 ;;
     --peak-time) PEAK_TIME="$2"; shift 2 ;;
+    --processes) PROCESSES="$2"; shift 2 ;;
     --host) HOST="$2"; HEALTH_URL="${HOST}/health"; shift 2 ;;
     --locust-file) LOCUST_FILE="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: $0 [--levels 500,1000,2000] [--spawn-rate 10] [--peak-time 60] [--run-time 3m] [--host http://127.0.0.1] [--locust-file scripts/test_locust.py]"
+      echo "Usage: $0 [--levels 2000,3000,4000] [--spawn-rate 100] [--peak-time 60] [--run-time 3m] [--processes -1] [--host http://127.0.0.1] [--locust-file scripts/test_locust.py]"
       echo ""
       echo "By default, run-time is computed PER LEVEL as (ramp-up time to reach that many users) + --peak-time"
       echo "seconds of steady-state load, so higher user counts automatically get a longer test instead of"
       echo "spending most of a fixed window still ramping up. Pass --run-time explicitly to override this and"
       echo "use one fixed duration for every level instead."
+      echo ""
+      echo "--processes runs Locust across multiple CPU cores (built-in multiprocessing), avoiding the"
+      echo "single-process generator becoming its own bottleneck at high user counts (watch for Locust's"
+      echo "'CPU usage above 90%' warning -- that means the load generator, not your server, is the ceiling)."
+      echo "Pass -1 to auto-detect and use all available cores, or an explicit worker count. Leave unset for"
+      echo "single-process (fine at lower concurrency levels)."
       exit 0
       ;;
     *)
@@ -61,9 +71,9 @@ mkdir -p "${RESULTS_DIR}"
 SUMMARY_FILE="${RESULTS_DIR}/summary.txt"
 echo "Load test sweep started $(date)" | tee "${SUMMARY_FILE}"
 if [[ -n "${RUN_TIME}" ]]; then
-  echo "Levels: ${LEVELS} | spawn-rate: ${SPAWN_RATE} | run-time: ${RUN_TIME} (fixed, applied to every level) | host: ${HOST}" | tee -a "${SUMMARY_FILE}"
+  echo "Levels: ${LEVELS} | spawn-rate: ${SPAWN_RATE} | run-time: ${RUN_TIME} (fixed, applied to every level) | processes: ${PROCESSES:-1 (single-process)} | host: ${HOST}" | tee -a "${SUMMARY_FILE}"
 else
-  echo "Levels: ${LEVELS} | spawn-rate: ${SPAWN_RATE} | run-time: auto (ramp-up-time + ${PEAK_TIME}s peak, per level) | host: ${HOST}" | tee -a "${SUMMARY_FILE}"
+  echo "Levels: ${LEVELS} | spawn-rate: ${SPAWN_RATE} | run-time: auto (ramp-up-time + ${PEAK_TIME}s peak, per level) | processes: ${PROCESSES:-1 (single-process)} | host: ${HOST}" | tee -a "${SUMMARY_FILE}"
 fi
 echo "" | tee -a "${SUMMARY_FILE}"
 
@@ -109,26 +119,40 @@ run_locust_level() {
   fi
 
   echo ""
-  echo "=== Running Locust: ${users} users | spawn-rate ${SPAWN_RATE} | run-time ${run_time_for_level} ==="
+  echo "=== Running Locust: ${users} users | spawn-rate ${SPAWN_RATE} | run-time ${run_time_for_level}${PROCESSES:+ | processes ${PROCESSES}} ==="
 
   local start_ts
   start_ts=$(date +%s)
+
+  # Build the locust command as an array so --processes can be conditionally
+  # included without messy string interpolation.
+  local locust_cmd=(uvx locust -f "${LOCUST_FILE}" --host "${HOST}"
+    --users "${users}" --spawn-rate "${SPAWN_RATE}" --run-time "${run_time_for_level}"
+    --headless --csv="${csv_prefix}" --csv-full-history)
+
+  if [[ -n "${PROCESSES}" ]]; then
+    # In multi-process mode, each worker process logs independently, so a
+    # single --logfile gets fragmented/interleaved rather than being one
+    # clean sequential log. Skip --logfile here and redirect stdout/stderr
+    # to the log file from the shell instead.
+    locust_cmd+=(--processes "${PROCESSES}")
+    echo "Multi-process mode: --processes ${PROCESSES} (avoids the load generator itself becoming the bottleneck at high user counts)"
+  else
+    locust_cmd+=(--logfile "${csv_prefix}_locust.log")
+  fi
 
   # Locust exits 1 whenever a run had ANY failures (including expected,
   # transient ramp-up 502s) -- that's a signal we inspect via the CSVs, not
   # something that should abort the whole sweep. Capture the exit code
   # without letting `set -e` kill the script.
   set +e
-  uvx locust -f "${LOCUST_FILE}" --host "${HOST}" \
-    --users "${users}" --spawn-rate "${SPAWN_RATE}" --run-time "${run_time_for_level}" \
-    --headless --csv="${csv_prefix}" --csv-full-history \
-    --logfile "${csv_prefix}_locust.log"
+  if [[ -n "${PROCESSES}" ]]; then
+    "${locust_cmd[@]}" > "${csv_prefix}_locust.log" 2>&1
+  else
+    "${locust_cmd[@]}"
+  fi
   local locust_exit=$?
   set -e
-
-  if [[ "${locust_exit}" -ne 0 ]]; then
-    echo "NOTE: locust exited with code ${locust_exit} for ${users} users (non-zero just means the run had failures -- check ${csv_prefix}_failures.csv, this is expected for ramp-up 502s)."
-  fi
 
   local end_ts
   end_ts=$(date +%s)

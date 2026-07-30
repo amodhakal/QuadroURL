@@ -1,0 +1,11 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+PUT,/urls/<id> [update],CatchResponseError('Failed to update URL: 502'),152,2026-07-30T20:45:43Z,2026-07-30T20:45:53Z
+GET,/users [list],CatchResponseError('Failed to list users: 502'),267,2026-07-30T20:45:23Z,2026-07-30T20:45:53Z
+PUT,/users/<id> [update],CatchResponseError('Failed to update user: 502'),119,2026-07-30T20:45:43Z,2026-07-30T20:45:53Z
+GET,/users/<id> [get],CatchResponseError('Unexpected status: 502'),141,2026-07-30T20:45:43Z,2026-07-30T20:45:53Z
+POST,/urls [create],CatchResponseError('Failed to create URL: 502'),79,2026-07-30T20:45:38Z,2026-07-30T20:45:53Z
+GET,/events,CatchResponseError('Failed to list events: 502'),96,2026-07-30T20:45:24Z,2026-07-30T20:45:53Z
+GET,/urls/<id> [get],CatchResponseError('Unexpected status: 502'),162,2026-07-30T20:45:43Z,2026-07-30T20:45:53Z
+GET,/urls [list],CatchResponseError('Failed to list URLs: 502'),287,2026-07-30T20:45:23Z,2026-07-30T20:45:53Z
+POST,/users [create],CatchResponseError('Failed to create user: 502'),235,2026-07-30T20:45:23Z,2026-07-30T20:45:53Z
+GET,/health,CatchResponseError('Health check failed: 502'),126,2026-07-30T20:45:23Z,2026-07-30T20:45:53Z
