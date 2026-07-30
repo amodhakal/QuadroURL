@@ -61,7 +61,6 @@ def test_list_users_empty(client):
     data = response.get_json()
     assert data["kind"] == "list"
     assert data["sample"] == []
-    assert data["total_items"] == 0
 
 
 def test_list_users_returns_users(client, sample_user):
@@ -80,7 +79,6 @@ def test_list_users_pagination(client):
     assert response.status_code == 200
     data = response.get_json()
     assert len(data["sample"]) == 2
-    assert data["total_items"] == 5
 
     response = client.get("/users?page=3&per_page=2")
     data = response.get_json()
@@ -180,7 +178,6 @@ def test_bulk_import_replaces_existing_users(client, sample_user, users_csv):
 
     list_response = client.get("/users")
     data = list_response.get_json()
-    assert data["total_items"] == 2
     usernames = {u["username"] for u in data["sample"]}
     assert "testuser" not in usernames
     assert "alice" in usernames

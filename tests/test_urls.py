@@ -106,7 +106,6 @@ def test_list_urls_empty(client):
     data = response.get_json()
     assert data["kind"] == "list"
     assert data["sample"] == []
-    assert data["total_items"] == 0
 
 
 def test_list_urls_returns_urls(client, sample_url):

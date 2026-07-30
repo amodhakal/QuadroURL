@@ -53,35 +53,6 @@ def list_users():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
 
-    body = request.get_json(silent=True) or {}
-
-    # Validate page from body
-    if "page" in body:
-        if not isinstance(body["page"], int):
-            current_app.logger.warning(
-                f"Invalid page type in body: {type(body['page'])}"
-            )
-            abort(400, description="page must be an integer")
-        if body["page"] < 1:
-            current_app.logger.warning(f"Invalid page value in body: {body['page']}")
-            abort(400, description="page must be a positive integer")
-        page = body["page"]
-
-    # Validate per_page from body
-    if "per_page" in body:
-        if not isinstance(body["per_page"], int):
-            current_app.logger.warning(
-                f"Invalid per_page type in body: {type(body['per_page'])}"
-            )
-            abort(400, description="per_page must be an integer")
-        if body["per_page"] < 1:
-            current_app.logger.warning(
-                f"Invalid per_page value in body: {body['per_page']}"
-            )
-            abort(400, description="per_page must be a positive integer")
-        per_page = body["per_page"]
-
-    total = User.select().count()
     offset = (page - 1) * per_page
     users = (
         User.select(User.id, User.username, User.email, User.created_at)
@@ -101,7 +72,6 @@ def list_users():
                 }
                 for u in users
             ],
-            "total_items": total,
         }
     )
 

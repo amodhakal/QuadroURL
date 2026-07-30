@@ -16,7 +16,7 @@ def get_metrics():
     used_gb = round(memory.used / 1024 / 1024 / 1024, 1)
     total_gb = round(memory.total / 1024 / 1024 / 1024, 1)
 
-    cpu_percent = psutil.cpu_percent(interval=0.1)
+    cpu_percent = psutil.cpu_percent(interval=None)
     process_memory_mb = round(process.memory_info().rss / 1024 / 1024, 1)
 
     snapshot = get_metrics_snapshot()

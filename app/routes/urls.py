@@ -107,29 +107,16 @@ def list_urls():
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
 
-    body = request.get_json(silent=True) or {}
-    if "user_id" in body:
-        query = Url.select(
-            Url.id,
-            Url.user,
-            Url.short_code,
-            Url.original_url,
-            Url.title,
-            Url.is_active,
-            Url.created_at,
-            Url.updated_at,
-        ).where(Url.user_id == body["user_id"])
-    else:
-        query = Url.select(
-            Url.id,
-            Url.user,
-            Url.short_code,
-            Url.original_url,
-            Url.title,
-            Url.is_active,
-            Url.created_at,
-            Url.updated_at,
-        )
+    query = Url.select(
+        Url.id,
+        Url.user,
+        Url.short_code,
+        Url.original_url,
+        Url.title,
+        Url.is_active,
+        Url.created_at,
+        Url.updated_at,
+    )
 
     if "id" in request.args:
         query = query.where(Url.id == request.args.get("id", type=int))
@@ -147,7 +134,6 @@ def list_urls():
         val = request.args["is_active"].lower()
         query = query.where(Url.is_active == (val == "true"))
 
-    total = query.count()
     urls = list(query.limit(size).offset(offset))
     current_app.logger.info(f"Listed {len(urls)} URL records")
 
@@ -167,7 +153,6 @@ def list_urls():
                 }
                 for u in urls
             ],
-            "total_items": total,
         }
     )
 
@@ -241,7 +226,7 @@ def update_url(url_id):
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
-def delete_url(url_id):
+def delete_url_endpoint(url_id):
     try:
         url = Url.get_by_id(url_id)
         url.delete_instance(recursive=True)
