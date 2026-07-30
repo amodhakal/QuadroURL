@@ -47,6 +47,15 @@ class JsonFormatter(logging.Formatter):
 
 
 class ListHandler(logging.Handler):
+    """In-memory log handler that stores records as structured dicts.
+
+    Delegates exception formatting to a ``logging.Formatter`` instance so
+    that ``formatException`` is available (it is defined on ``Formatter``,
+    not ``Handler``).
+    """
+
+    _formatter = logging.Formatter()
+
     def emit(self, record):
         try:
             log_data = {
@@ -64,7 +73,9 @@ class ListHandler(logging.Handler):
             except RuntimeError:
                 pass
             if record.exc_info:
-                log_data["exception"] = self.formatException(record.exc_info)
+                log_data["exception"] = self._formatter.formatException(
+                    record.exc_info
+                )
             log_records.append(log_data)
             if len(log_records) > 200:
                 del log_records[:-200]
