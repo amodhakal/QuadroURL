@@ -11,7 +11,10 @@ RUN uv sync --frozen --no-dev
 COPY . .
 
 ENV FLASK_DEBUG=false
+ENV PORT=8000
+ENV GUNICORN_WORKERS=4
+ENV GUNICORN_THREADS=4
 
 EXPOSE 8000
 
-CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "4", "--worker-class", "gthread", "--timeout", "5", "run:app"]
+CMD ["sh", "-c", "uv run gunicorn --bind 0.0.0.0:8000 --workers $GUNICORN_WORKERS --threads $GUNICORN_THREADS --worker-class gthread --timeout 5 run:app"]

@@ -1,0 +1,6 @@
+[2026-07-30 16:23:37,375] A1/INFO/locust.main: Starting Locust 2.46.2
+[2026-07-30 16:23:37,376] A1/INFO/locust.main: Run time limit set to 70 seconds
+[2026-07-30 16:23:37,377] A1/INFO/locust.runners: Ramping to 1000 users at a rate of 100.00 per second
+[2026-07-30 16:23:46,441] A1/INFO/locust.runners: All users spawned: {"URLShortenerUser": 1000} (1000 total users)
+[2026-07-30 16:24:47,200] A1/INFO/locust.main: --run-time limit reached, shutting down
+[2026-07-30 16:24:47,298] A1/INFO/locust.main: Shutting down (exit code 1)

@@ -151,7 +151,7 @@ def get_l2():
         try:
             _l2_pool = redis.ConnectionPool.from_url(
                 redis_url,
-                max_connections=10,
+                max_connections=25,
                 socket_timeout=0.5,
                 socket_connect_timeout=0.5,
                 decode_responses=True,
