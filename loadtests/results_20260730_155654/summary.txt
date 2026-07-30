@@ -1,0 +1,14 @@
+Load test sweep started Thu Jul 30 15:56:54 EDT 2026
+Levels: 500,1000,2000 | spawn-rate: 10 | run-time: auto (ramp-up-time + 240s peak, per level) | host: http://127.0.0.1
+
+--- 500 users (run-time 290s): Aggregated row ---
+Type  Name  Request Count  Failure Count  Median Response Time  Average Response Time  Min Response Time  Max Response Time  Average Content Size  Requests/s  Failures/s  50%  66%  75%  80%  90%  95%  98%  99%  99.9%  99.99%  100%
+
+--- 1000 users (run-time 340s): Aggregated row ---
+Type  Name  Request Count  Failure Count  Median Response Time  Average Response Time  Min Response Time  Max Response Time  Average Content Size  Requests/s  Failures/s  50%  66%  75%  80%  90%  95%  98%  99%  99.9%  99.99%  100%
+
+--- 2000 users (run-time 440s): Aggregated row ---
+Type  Name  Request Count  Failure Count  Median Response Time  Average Response Time  Min Response Time  Max Response Time  Average Content Size  Requests/s  Failures/s  50%  66%  75%  80%  90%  95%  98%  99%  99.9%  99.99%  100%
+
+=== Sweep complete ===
+Results directory: loadtests/results_20260730_155654

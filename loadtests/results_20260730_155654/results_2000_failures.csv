@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,/users [list],CatchResponseError('Failed to list users: 502'),4,2026-07-30T20:08:35Z,2026-07-30T20:08:36Z
+POST,/users [create],CatchResponseError('Failed to create user: 502'),13,2026-07-30T20:08:33Z,2026-07-30T20:11:43Z

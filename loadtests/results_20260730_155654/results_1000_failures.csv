@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+POST,/users [create],CatchResponseError('Failed to create user: 502'),9,2026-07-30T20:02:29Z,2026-07-30T20:03:05Z
+POST,/urls [create],CatchResponseError('Failed to create URL: 400'),2,2026-07-30T20:02:36Z,2026-07-30T20:02:36Z
