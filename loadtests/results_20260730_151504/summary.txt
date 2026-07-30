@@ -1,0 +1,3 @@
+Load test sweep started Thu Jul 30 15:15:04 EDT 2026
+Levels: 500,1000,2000 | spawn-rate: 100 | run-time: 2m | host: http://127.0.0.1
+
