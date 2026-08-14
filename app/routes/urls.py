@@ -1,5 +1,6 @@
 import random
 import string
+import uuid
 
 from flask import (
     Blueprint,
@@ -9,7 +10,6 @@ from flask import (
     redirect as flask_redirect,
     request,
 )
-from peewee import IntegrityError
 from playhouse.shortcuts import model_to_dict
 
 from app.cache import (
@@ -21,8 +21,8 @@ from app.cache import (
     set_url_by_short_code,
 )
 from app.models.url import Url
-from app.models.user import User
 from app.utils.events import create_event_async as create_event
+from app.utils.kafka_producer import publish_url_create
 
 
 urls_bp = Blueprint("urls", __name__)
@@ -66,40 +66,58 @@ def create_url():
         current_app.logger.warning("User not found")
         abort(400, description="User not found")
 
-    for _ in range(5):
-        short_code = generate_short_code()
-        try:
-            url = Url.create(
-                user_id=user_id,
-                short_code=short_code,
-                original_url=original_url,
-                title=title,
-                is_active=True,
-            )
-            break
-        except IntegrityError:
-            continue
-    else:
-        abort(500, description="Failed to generate unique short code")
+    request_id = str(uuid.uuid4())
 
-    create_event(
-        url.id,
-        user_id,
-        "created",
-        {
-            "short_code": short_code,
-            "original_url": original_url,
-        },
-    )
+    publish_url_create({
+        "request_id": request_id,
+        "user_id": user_id,
+        "original_url": original_url,
+        "title": title,
+    })
 
     current_app.logger.info(
-        f"Short URL created with id={url.id} short_code={short_code}"
+        f"URL create requested: request_id={request_id} user_id={user_id}"
     )
 
-    data = format_url(url)
-    set_url(url.id, data)
-    set_url_by_short_code(short_code, data)
-    return jsonify(data), 201
+    return jsonify({
+        "request_id": request_id,
+        "status": "pending",
+    }), 202
+
+
+@urls_bp.route("/urls/<request_id>/status", methods=["GET"])
+def get_url_status(request_id):
+    import os
+    import json
+    import redis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    r = redis.from_url(redis_url, socket_timeout=2)
+
+    key = f"url-pending:{request_id}"
+    raw = r.get(key)
+
+    if raw is None:
+        abort(404)
+
+    status_data = json.loads(raw)
+
+    if status_data.get("status") == "error":
+        return jsonify({
+            "status": "error",
+            "error": status_data.get("error", "Unknown error"),
+        }), 500
+
+    if status_data.get("status") == "ready":
+        return jsonify({
+            "status": "ready",
+            "id": status_data.get("id"),
+            "short_code": status_data.get("short_code"),
+            "original_url": status_data.get("original_url"),
+            "title": status_data.get("title"),
+        })
+
+    return jsonify({"status": "pending"})
 
 
 @urls_bp.route("/urls", methods=["GET"])

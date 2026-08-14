@@ -246,21 +246,48 @@ Content-Type: application/json
 }
 ```
 
-**Response:** `201 Created`
+**Response:** `202 Accepted`
 ```json
 {
-  "id": 1,
-  "user_id": 1,
-  "short_code": "k8Jd9s",
-  "original_url": "https://example.com/long-page",
-  "title": "Example Page",
-  "is_active": true,
-  "created_at": "2026-04-03T12:00:00",
-  "updated_at": "2026-04-03T12:00:00"
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending"
 }
 ```
 
+URL creation is processed asynchronously via Kafka. Poll the status endpoint to get the short code.
+
 **Errors:** `400` — invalid JSON, missing fields, or user not found.
+
+---
+
+#### Get URL Status (Poll after Create)
+
+```
+GET /urls/<request_id>/status
+```
+
+**Response:** `200 OK`
+```json
+{
+  "status": "ready",
+  "id": 1,
+  "short_code": "k8Jd9s",
+  "original_url": "https://example.com/long-page",
+  "title": "Example Page"
+}
+```
+
+While pending:
+```json
+{"status": "pending"}
+```
+
+On error:
+```json
+{"status": "error", "error": "Failed to generate unique short code"}
+```
+
+**Errors:** `404` — request_id not found (expired after 1 hour).
 
 ---
 
@@ -671,15 +698,19 @@ terraform destroy -auto-approve
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Kafka Request Audit Logging
+### Kafka Pipeline
 
-Every HTTP request is logged asynchronously through a Kafka pipeline:
+The app uses three Kafka topics for asynchronous processing:
 
 ```
-Flask after_request → Kafka topic (request-logs) → Consumer service → PostgreSQL (RequestLog table)
+Flask app ──┬── after_request ──▶ request-logs topic ──▶ Consumer ──▶ RequestLog table
+            ├── create/update/click ──▶ url-events topic ──▶ Consumer ──▶ Event table
+            └── POST /urls ──▶ url-creates topic ──▶ Consumer ──▶ Url table + Redis
 ```
 
-**What gets logged per request:**
+#### Topic: `request-logs` (drain every 5s)
+
+Logs every HTTP request with full metadata:
 
 | Field | Example |
 |-------|---------|
@@ -690,28 +721,34 @@ Flask after_request → Kafka topic (request-logs) → Consumer service → Post
 | `status_code` | `302` |
 | `latency_ms` | `12.34` |
 | `short_code` | `k8Jd9s` |
-| `created_at` | `2026-08-14T12:00:00+00:00` |
 
-**Consumer behavior:**
-- Polls Kafka every 1 second
-- Drains buffer to PostgreSQL every **30 seconds** (configurable via `DRAIN_INTERVAL`)
-- Also flushes when buffer reaches **1000 messages** (configurable via `BATCH_SIZE`)
-- Graceful shutdown on SIGTERM — flushes remaining buffer before exit
+#### Topic: `url-events` (drain every 1s)
 
-**Configuration (environment variables):**
+Business events (clicks, creates, updates) that were previously written by a 2-thread ThreadPoolExecutor. Now batch-consumed by Kafka for better throughput and no FK race conditions.
+
+#### Topic: `url-creates` (processed individually)
+
+Async URL creation. Consumer generates short codes, inserts into PostgreSQL, and sets a Redis key (`url-pending:{request_id}`) for the client to poll.
+
+#### Consumer Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KAFKA_BROKER` | `kafka:9092` | Kafka bootstrap server |
-| `KAFKA_TOPIC` | `request-logs` | Topic name |
 | `KAFKA_GROUP` | `request-log-writer` | Consumer group ID |
-| `DRAIN_INTERVAL` | `30` | Seconds between batch inserts |
-| `BATCH_SIZE` | `1000` | Max messages before forced flush |
+| `KAFKA_TOPIC_REQUEST_LOGS` | `request-logs` | Access log topic |
+| `KAFKA_TOPIC_URL_EVENTS` | `url-events` | Business event topic |
+| `KAFKA_TOPIC_URL_CREATES` | `url-creates` | URL creation topic |
+| `DRAIN_INTERVAL_LOGS` | `5` | Seconds between log batch inserts |
+| `DRAIN_INTERVAL_EVENTS` | `1` | Seconds between event batch inserts |
+| `BATCH_SIZE_LOGS` | `1000` | Max log messages before flush |
+| `BATCH_SIZE_EVENTS` | `500` | Max event messages before flush |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis for pending URL status |
 
 ### Design Decisions
 
-- **Redis** — L2 cache between app replicas to prevent redundant DB calls. L1 (in-process LRU dict) avoids Redis latency for hot keys. Anti-stampede strategies: single-flight deduplication, probabilistic early expiration, negative caching, TTL jitter.
-- **Kafka** — Decouples request logging from the request path. The Flask app publishes log events non-blocking to a Kafka topic. A separate consumer service drains the topic in batches (every 30s or 1000 messages) and bulk-inserts into PostgreSQL. This prevents DB write latency from affecting request handling and provides replayability.
+- **Redis** — L2 cache between app replicas to prevent redundant DB calls. L1 (in-process LRU dict) avoids Redis latency for hot keys. Anti-stampede strategies: single-flight deduplication, probabilistic early expiration, negative caching, TTL jitter. Also stores pending URL creation status for async polling.
+- **Kafka** — Decouples all write operations from the request path. Three topics with different drain intervals: 5s for access logs, 1s for business events, immediate processing for URL creation. Replaces the broken 2-thread ThreadPoolExecutor that had FK race conditions and a memory leak.
 - **Nginx** — Reverse proxy and load balancer across app replicas. Connection timeouts (5s connect, 10s read) prevent slow clients from holding connections.
 - **Docker Compose** — Containerized orchestration with health checks, restart policies, and persistent volumes for PostgreSQL, Redis, and Grafana.
 - **Locust** — Python-native load testing (same stack as the app). Weighted task distribution simulates realistic user behavior.
@@ -897,7 +934,7 @@ QuadroURL/
 │   │   └── request_log.py   # RequestLog(id, url FK, user_agent, client_ip, method, path, status_code, latency_ms, short_code)
 │   ├── routes/
 │   │   ├── users.py         # CRUD + bulk CSV import
-│   │   ├── urls.py          # CRUD + short-code redirect
+│   │   ├── urls.py          # Async create (202), status poll, CRUD + redirect
 │   │   ├── events.py        # List + create events
 │   │   ├── metrics.py       # GET /metrics (golden signals)
 │   │   ├── logs.py          # GET /logs (in-memory buffer)
@@ -906,15 +943,16 @@ QuadroURL/
 │   │   └── fail.py          # GET /fail (chaos endpoint)
 │   └── utils/
 │       ├── alerts.py        # Discord webhook health-check monitor
-│       ├── events.py        # Async event creation via ThreadPoolExecutor
-│       ├── kafka_producer.py # Kafka producer for request log events
+│       ├── events.py        # Event publishing via Kafka (replaces ThreadPoolExecutor)
+│       ├── kafka_producer.py # Kafka producer for all topics (logs, events, url-creates)
 │       ├── logger.py        # JSONFormatter helper
 │       └── ratelimit.py     # Distributed token-bucket rate limiting (Redis Lua)
 ├── consumer/                # Kafka consumer service (separate container)
 │   ├── Dockerfile           # Python 3.13-slim consumer image
-│   ├── requirements.txt     # confluent-kafka, psycopg2, peewee
-│   ├── config.py            # Environment variable configuration
-│   └── app.py               # Consumer loop: poll Kafka → buffer → batch insert to PostgreSQL
+│   ├── requirements.txt     # confluent-kafka, psycopg2, peewee, redis
+│   ├── config.py            # Per-topic configuration (drain intervals, batch sizes)
+│   ├── app.py               # Multi-topic consumer: 3 threads for 3 topics
+│   └── url_create_handler.py # URL creation logic (short code gen, DB insert, Redis status)
 ├── tests/                   # 12 test files, ~1100+ lines
 ├── scripts/
 │   ├── test_locust.py       # Locust load test

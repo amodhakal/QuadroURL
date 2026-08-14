@@ -179,20 +179,27 @@ services:
       dockerfile: Dockerfile
     environment:
       KAFKA_BROKER: kafka:9092
-      KAFKA_TOPIC: request-logs
       KAFKA_GROUP: request-log-writer
+      KAFKA_TOPIC_REQUEST_LOGS: request-logs
+      KAFKA_TOPIC_URL_EVENTS: url-events
+      KAFKA_TOPIC_URL_CREATES: url-creates
       DATABASE_HOST: postgres
       DATABASE_PORT: ${DATABASE_PORT}
       DATABASE_NAME: ${DATABASE_NAME}
       DATABASE_USER: ${DATABASE_USER}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DRAIN_INTERVAL: "30"
-      BATCH_SIZE: "1000"
+      REDIS_URL: redis://redis:6379/0
+      DRAIN_INTERVAL_LOGS: "5"
+      DRAIN_INTERVAL_EVENTS: "1"
+      BATCH_SIZE_LOGS: "1000"
+      BATCH_SIZE_EVENTS: "500"
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
     networks:
       - app-network

@@ -24,14 +24,28 @@ def _get_producer():
     return _producer
 
 
-def publish_log_event(data: dict):
+def _produce(topic, data):
     try:
         producer = _get_producer()
-        topic = os.environ.get("KAFKA_TOPIC", "request-logs")
         producer.produce(topic, value=json.dumps(data).encode("utf-8"))
         producer.poll(0)
     except Exception:
-        logger.exception("Failed to publish log event to Kafka")
+        logger.exception(f"Failed to publish to Kafka topic={topic}")
+
+
+def publish_log_event(data: dict):
+    topic = os.environ.get("KAFKA_TOPIC_REQUEST_LOGS", "request-logs")
+    _produce(topic, data)
+
+
+def publish_event(data: dict):
+    topic = os.environ.get("KAFKA_TOPIC_URL_EVENTS", "url-events")
+    _produce(topic, data)
+
+
+def publish_url_create(data: dict):
+    topic = os.environ.get("KAFKA_TOPIC_URL_CREATES", "url-creates")
+    _produce(topic, data)
 
 
 def flush_producer():
