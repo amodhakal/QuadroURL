@@ -53,5 +53,8 @@ export async function resolveShortCode(
 }
 
 export function shortLink(code: string): string {
-  return `${window.location.origin}/r/${code}`
+  const base =
+    import.meta.env.VITE_PUBLIC_URL ??
+    `${window.location.protocol}//${window.location.hostname}`
+  return `${base}/urls/${code}/redirect`
 }
