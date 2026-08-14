@@ -50,12 +50,15 @@ class URLShortenerUser(HttpUser):
             name="/urls [create]",
             catch_response=True,
         ) as response:
-            if response.status_code == 201:
-                try:
-                    self.url_id = response.json().get("id")
+            if response.status_code in (201, 202):
+                if response.status_code == 201:
+                    try:
+                        self.url_id = response.json().get("id")
+                        response.success()
+                    except Exception:
+                        response.failure("Invalid JSON response")
+                else:
                     response.success()
-                except Exception:
-                    response.failure("Invalid JSON response")
             else:
                 response.failure(
                     f"Failed to create URL: {response.status_code}")
@@ -220,7 +223,7 @@ class URLShortenerUser(HttpUser):
             name="/urls [create]",
             catch_response=True,
         ) as response:
-            if response.status_code == 201:
+            if response.status_code in (201, 202):
                 response.success()
             else:
                 response.failure(
