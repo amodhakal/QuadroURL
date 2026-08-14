@@ -1,5 +1,6 @@
 import os
 
+from flask import request
 from peewee import DatabaseProxy, Model
 from playhouse.pool import PooledPostgresqlDatabase
 
@@ -18,7 +19,7 @@ def init_db(app):
         port=int(os.environ.get("DATABASE_PORT", 5432)),
         user=os.environ.get("DATABASE_USER", "postgres"),
         password=os.environ.get("DATABASE_PASSWORD", "postgres"),
-        max_connections=50,
+        max_connections=int(os.environ.get("DB_MAX_CONNECTIONS", 20)),
         stale_timeout=300,
         connect_timeout=5,
     )
@@ -30,6 +31,8 @@ def init_db(app):
 
     @app.before_request
     def _db_connect():
+        if request.path == "/health":
+            return
         db.connect(reuse_if_open=True)
         db.begin()
 

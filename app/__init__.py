@@ -122,6 +122,8 @@ def create_app():
 
     @app.before_request
     def log_request():
+        if request.path == "/health":
+            return
         request._start_time = time.time()
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
@@ -130,6 +132,8 @@ def create_app():
 
     @app.after_request
     def track_metrics(response):
+        if request.path == "/health":
+            return response
         latency_s = time.time() - getattr(request, "_start_time", time.time())
         latency_ms = latency_s * 1000
         record_request_end(request.method, request.path, response.status_code, latency_ms)
@@ -157,23 +161,58 @@ def create_app():
         client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
         user_agent = request.headers.get("User-Agent", "")
 
-        publish_log_event({
-            "user_agent": user_agent,
-            "client_ip": client_ip,
-            "method": request.method,
-            "path": request.path,
-            "status_code": response.status_code,
-            "latency_ms": round(latency_ms, 2),
-            "short_code": short_code,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        try:
+            publish_log_event({
+                "user_agent": user_agent,
+                "client_ip": client_ip,
+                "method": request.method,
+                "path": request.path,
+                "status_code": response.status_code,
+                "latency_ms": round(latency_ms, 2),
+                "short_code": short_code,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            app.logger.exception("Failed to publish request log to Kafka")
 
         return response
 
     @app.route("/health")
     def health():
-        app.logger.info("Health check requested")
         return jsonify(status="ok")
+
+    @app.route("/ready")
+    def readiness():
+        from app.cache import get_l2
+        from app.database import db
+        from app.utils.kafka_producer import get_producer
+
+        checks = {}
+
+        try:
+            db.execute_sql("SELECT 1")
+            checks["postgres"] = "ok"
+        except Exception as exc:
+            checks["postgres"] = str(exc)
+
+        try:
+            redis_client = get_l2()
+            if redis_client is not None and redis_client.ping():
+                checks["redis"] = "ok"
+            else:
+                checks["redis"] = "unavailable"
+        except Exception as exc:
+            checks["redis"] = str(exc)
+
+        try:
+            producer = get_producer()
+            producer.list_topics(timeout=2)
+            checks["kafka"] = "ok"
+        except Exception as exc:
+            checks["kafka"] = str(exc)
+
+        ready = all(v == "ok" for v in checks.values())
+        return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
 
     @app.errorhandler(400)
     def bad_request(error):

@@ -25,3 +25,19 @@ export interface ShortCodeResponse {
   url: string
   short_code: string
 }
+
+export interface CreateUrlResponse {
+  request_id: string
+  status: "pending"
+}
+
+export type UrlStatus =
+  | {
+      status: "ready"
+      id: number
+      short_code: string
+      original_url: string
+      title: string
+    }
+  | { status: "error"; error: string }
+  | { status: "pending" }

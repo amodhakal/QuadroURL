@@ -143,7 +143,7 @@ def test_after_request_psutil_gauges_set_every_10th_request(app):
         if getattr(f, "__name__", "") == "track_metrics"
     )
 
-    with app.test_request_context("/health"):
+    with app.test_request_context("/users"):
         request._start_time = time.time()
         request._sample_psutil = 10
         resp = app.make_response(jsonify({"status": "ok"}))

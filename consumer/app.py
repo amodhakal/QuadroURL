@@ -5,7 +5,7 @@ import sys
 import time
 
 import redis
-from confluent_kafka import Consumer, KafkaError
+from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
 from peewee import (
     AutoField,
     BooleanField,
@@ -19,7 +19,7 @@ from peewee import (
 from playhouse.pool import PooledPostgresqlDatabase
 
 import config
-from url_create_handler import handle_url_create
+from url_create_handler import handle_url_create_batch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,13 +28,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("consumer")
 
+_MAX_CONNECTIONS = {
+    "logs": config.DB_MAX_CONNECTIONS_LOGS,
+    "events": config.DB_MAX_CONNECTIONS_EVENTS,
+    "creates": config.DB_MAX_CONNECTIONS_CREATES,
+}
+
 db = PooledPostgresqlDatabase(
     config.DATABASE_NAME,
     host=config.DATABASE_HOST,
     port=config.DATABASE_PORT,
     user=config.DATABASE_USER,
     password=config.DATABASE_PASSWORD,
-    max_connections=10,
+    max_connections=_MAX_CONNECTIONS.get(config.CONSUMER_TYPE, 10),
     stale_timeout=300,
     connect_timeout=5,
 )
@@ -94,21 +100,44 @@ def create_consumer(group_id):
     })
 
 
+def commit_buffer(consumer, buffered):
+    """Commit offsets AFTER the last successfully-buffered message per partition.
+
+    ``buffered`` holds ``(payload, message)`` tuples.  Only the offsets of
+    messages actually drained are committed, so any message discarded during a
+    stalled period is redelivered rather than silently skipped.
+    """
+    by_partition = {}
+    for _, msg in buffered:
+        key = (msg.topic(), msg.partition())
+        offset = msg.offset()
+        if key not in by_partition or offset > by_partition[key]:
+            by_partition[key] = offset
+    if not by_partition:
+        return
+    offsets = [
+        TopicPartition(topic, partition, offset + 1)
+        for (topic, partition), offset in by_partition.items()
+    ]
+    consumer.commit(offsets=offsets, asynchronous=False)
+
+
 def drain_request_logs(buffer):
     if not buffer:
-        return
+        return True
 
+    rows = [payload for payload, _ in buffer]
     start = time.time()
     try:
         db.connect(reuse_if_open=True)
         with db.atomic():
-            RequestLog.insert_many(buffer).execute()
+            RequestLog.insert_many(rows).execute()
         elapsed = time.time() - start
-        logger.info(f"[request-logs] Inserted {len(buffer)} records in {elapsed:.2f}s")
-        buffer.clear()
+        logger.info(f"[request-logs] Inserted {len(rows)} records in {elapsed:.2f}s")
+        return True
     except Exception:
         logger.exception("[request-logs] Failed to insert batch")
-        buffer.clear()
+        return False
     finally:
         if not db.is_closed():
             db.close()
@@ -116,22 +145,35 @@ def drain_request_logs(buffer):
 
 def drain_url_events(buffer):
     if not buffer:
-        return
+        return True
 
+    rows = [payload for payload, _ in buffer]
     start = time.time()
     try:
         db.connect(reuse_if_open=True)
         with db.atomic():
-            Event.insert_many(buffer).execute()
+            Event.insert_many(rows).execute()
         elapsed = time.time() - start
-        logger.info(f"[url-events] Inserted {len(buffer)} records in {elapsed:.2f}s")
-        buffer.clear()
+        logger.info(f"[url-events] Inserted {len(rows)} records in {elapsed:.2f}s")
+        return True
     except Exception:
         logger.exception("[url-events] Failed to insert batch")
-        buffer.clear()
+        return False
     finally:
         if not db.is_closed():
             db.close()
+
+
+def emit_created_events(producer, events):
+    for event in events:
+        try:
+            producer.produce(
+                config.KAFKA_TOPIC_URL_EVENTS,
+                value=json.dumps(event).encode("utf-8"),
+            )
+        except Exception:
+            logger.exception("[url-creates] Failed to publish created event")
+    producer.poll(0)
 
 
 def run_request_log_consumer():
@@ -144,6 +186,17 @@ def run_request_log_consumer():
 
     buffer = []
     last_drain = time.time()
+    stalled = False
+
+    def drain():
+        nonlocal stalled
+        if drain_request_logs(buffer):
+            commit_buffer(consumer, buffer)
+            buffer.clear()
+            stalled = False
+        else:
+            stalled = True
+        return True
 
     while running:
         msg = consumer.poll(timeout=1.0)
@@ -151,7 +204,7 @@ def run_request_log_consumer():
         if msg is None:
             now = time.time()
             if buffer and (now - last_drain >= config.DRAIN_INTERVAL_LOGS):
-                drain_request_logs(buffer)
+                drain()
                 last_drain = now
             continue
 
@@ -161,9 +214,12 @@ def run_request_log_consumer():
             logger.error(f"[request-logs] Kafka error: {msg.error()}")
             continue
 
+        if stalled:
+            continue
+
         try:
             data = json.loads(msg.value().decode("utf-8"))
-            buffer.append({
+            payload = {
                 "user_agent": data.get("user_agent", ""),
                 "client_ip": data.get("client_ip", ""),
                 "method": data.get("method", ""),
@@ -172,21 +228,23 @@ def run_request_log_consumer():
                 "latency_ms": data.get("latency_ms", 0.0),
                 "short_code": data.get("short_code", ""),
                 "created_at": data.get("created_at", ""),
-            })
+            }
+            buffer.append((payload, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"[request-logs] Failed to decode message: {e}")
             continue
 
         now = time.time()
         if len(buffer) >= config.BATCH_SIZE_LOGS:
-            drain_request_logs(buffer)
+            drain()
             last_drain = now
         elif now - last_drain >= config.DRAIN_INTERVAL_LOGS:
-            drain_request_logs(buffer)
+            drain()
             last_drain = now
 
     if buffer:
-        drain_request_logs(buffer)
+        if drain_request_logs(buffer):
+            commit_buffer(consumer, buffer)
     consumer.close()
 
 
@@ -200,6 +258,17 @@ def run_url_event_consumer():
 
     buffer = []
     last_drain = time.time()
+    stalled = False
+
+    def drain():
+        nonlocal stalled
+        if drain_url_events(buffer):
+            commit_buffer(consumer, buffer)
+            buffer.clear()
+            stalled = False
+        else:
+            stalled = True
+        return True
 
     while running:
         msg = consumer.poll(timeout=1.0)
@@ -207,7 +276,7 @@ def run_url_event_consumer():
         if msg is None:
             now = time.time()
             if buffer and (now - last_drain >= config.DRAIN_INTERVAL_EVENTS):
-                drain_url_events(buffer)
+                drain()
                 last_drain = now
             continue
 
@@ -217,32 +286,37 @@ def run_url_event_consumer():
             logger.error(f"[url-events] Kafka error: {msg.error()}")
             continue
 
+        if stalled:
+            continue
+
         try:
             data = json.loads(msg.value().decode("utf-8"))
             details = data.get("details", {})
             if isinstance(details, dict):
                 details = json.dumps(details)
-            buffer.append({
+            payload = {
                 "url_id": data.get("url_id", 0),
                 "user_id": data.get("user_id", 0),
                 "event_type": data.get("event_type", ""),
                 "details": details,
-                "created_at": data.get("created_at", ""),
-            })
+                "timestamp": data.get("created_at") or data.get("timestamp") or None,
+            }
+            buffer.append((payload, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"[url-events] Failed to decode message: {e}")
             continue
 
         now = time.time()
         if len(buffer) >= config.BATCH_SIZE_EVENTS:
-            drain_url_events(buffer)
+            drain()
             last_drain = now
         elif now - last_drain >= config.DRAIN_INTERVAL_EVENTS:
-            drain_url_events(buffer)
+            drain()
             last_drain = now
 
     if buffer:
-        drain_url_events(buffer)
+        if drain_url_events(buffer):
+            commit_buffer(consumer, buffer)
     consumer.close()
 
 
@@ -250,14 +324,37 @@ def run_url_create_consumer():
     consumer = create_consumer(f"{config.KAFKA_GROUP}-creates")
     consumer.subscribe([config.KAFKA_TOPIC_URL_CREATES])
     redis_client = redis.from_url(config.REDIS_URL, socket_timeout=2)
+    event_producer = Producer({"bootstrap.servers": config.KAFKA_BROKER})
     logger.info(
-        f"[url-creates] Subscribed to {config.KAFKA_TOPIC_URL_CREATES}"
+        f"[url-creates] Subscribed to {config.KAFKA_TOPIC_URL_CREATES}, "
+        f"drain={config.DRAIN_INTERVAL_CREATES}s, batch={config.BATCH_SIZE_CREATES}"
     )
+
+    buffer = []
+    last_drain = time.time()
+    stalled = False
+
+    def drain():
+        nonlocal stalled
+        messages = [payload for payload, _ in buffer]
+        ok, events = handle_url_create_batch(messages, db, redis_client)
+        if ok:
+            commit_buffer(consumer, buffer)
+            buffer.clear()
+            emit_created_events(event_producer, events)
+            stalled = False
+        else:
+            stalled = True
+        return True
 
     while running:
         msg = consumer.poll(timeout=1.0)
 
         if msg is None:
+            now = time.time()
+            if buffer and (now - last_drain >= config.DRAIN_INTERVAL_CREATES):
+                drain()
+                last_drain = now
             continue
 
         if msg.error():
@@ -266,48 +363,54 @@ def run_url_create_consumer():
             logger.error(f"[url-creates] Kafka error: {msg.error()}")
             continue
 
+        if stalled:
+            continue
+
         try:
             data = json.loads(msg.value().decode("utf-8"))
-            handle_url_create(data, db, redis_client)
+            buffer.append((data, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"[url-creates] Failed to decode message: {e}")
             continue
 
-        consumer.commit(asynchronous=False)
+        now = time.time()
+        if len(buffer) >= config.BATCH_SIZE_CREATES:
+            drain()
+            last_drain = now
+        elif now - last_drain >= config.DRAIN_INTERVAL_CREATES:
+            drain()
+            last_drain = now
+
+    if buffer:
+        messages = [payload for payload, _ in buffer]
+        ok, events = handle_url_create_batch(messages, db, redis_client)
+        if ok:
+            commit_buffer(consumer, buffer)
+            emit_created_events(event_producer, events)
 
     consumer.close()
     redis_client.close()
+    event_producer.flush(timeout=5)
 
 
 def main():
-    logger.info("Starting multi-topic Kafka consumer")
+    consumer_type = config.CONSUMER_TYPE
     logger.info(
-        f"Broker: {config.KAFKA_BROKER}, Group: {config.KAFKA_GROUP}"
+        f"Starting Kafka consumer for type={consumer_type}, "
+        f"broker={config.KAFKA_BROKER}, group={config.KAFKA_GROUP}"
     )
 
-    import threading
+    runners = {
+        "logs": run_request_log_consumer,
+        "events": run_url_event_consumer,
+        "creates": run_url_create_consumer,
+    }
+    runner = runners.get(consumer_type)
+    if runner is None:
+        logger.error(f"Unknown CONSUMER_TYPE={consumer_type}. Must be one of: logs, events, creates")
+        sys.exit(1)
 
-    threads = [
-        threading.Thread(target=run_request_log_consumer, name="request-log-consumer", daemon=True),
-        threading.Thread(target=run_url_event_consumer, name="url-event-consumer", daemon=True),
-        threading.Thread(target=run_url_create_consumer, name="url-create-consumer", daemon=True),
-    ]
-
-    for t in threads:
-        t.start()
-
-    try:
-        while running:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        global running
-        running = False
-        logger.info("Shutting down consumers...")
-        for t in threads:
-            t.join(timeout=10)
-        logger.info("All consumers shut down")
+    runner()
 
 
 if __name__ == "__main__":

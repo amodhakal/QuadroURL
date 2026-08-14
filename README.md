@@ -46,7 +46,7 @@ curl http://127.0.0.1/health
 docker compose up --build
 ```
 
-This starts 10 services: app (3 replicas), PostgreSQL, Redis, Kafka, Zookeeper, request-log-consumer, Nginx, Prometheus, Grafana, and Loki+Promtail.
+This starts 12 services: app (3 replicas), PostgreSQL, Redis, Kafka, Zookeeper, three consumer services (request-log, url-event, url-create, 3 replicas each), Nginx, Prometheus, Grafana, and Loki+Promtail.
 
 ### Without Docker (local development)
 
@@ -91,15 +91,35 @@ docker compose down -v
 
 ## API Reference
 
-### Health Check
+### Health Checks
 
 ```
 GET /health
 ```
 
+Pure **liveness** check — only confirms the process is up and the port is open.
+It does not touch Postgres, Redis, or Kafka, so dependency pressure cannot cause
+the load balancer to cycle healthy instances.
+
 **Response:** `200 OK`
 ```json
 {"status": "ok"}
+```
+
+```
+GET /ready
+```
+
+Deep **readiness** check — verifies Postgres (`SELECT 1`), Redis (`PING`), and
+Kafka (metadata) are all reachable. Returns `200` with per-dependency status when
+healthy, or `503` listing the failing checks.
+
+**Response (healthy):** `200 OK`
+```json
+{
+  "status": "ok",
+  "checks": {"postgres": "ok", "redis": "ok", "kafka": "ok"}
+}
 ```
 
 ---
@@ -682,9 +702,10 @@ terraform destroy -auto-approve
 │                         │                      │                        │
 │                         │ publish              │ batch insert           │
 │                         ▼                      │                        │
-│                    ┌───────────┐  poll  ┌──────┴──────────────┐         │
-│                    │   kafka   │◀───────│ request-log-consumer │         │
-│                    │  :9092    │        └─────────────────────┘         │
+│                    ┌───────────┐  poll  ┌────────────────────────────┐   │
+│                    │   kafka   │◀───────│ request-log / url-event /  │   │
+│                    │  :9092    │        │ url-create consumers (3x)  │   │
+│                    └─────┬─────┘        └────────────────────────────┘   │
 │                    └─────┬─────┘                                        │
 │                          │                                              │
 │                    ┌─────┴─────┐      ┌───────────┐                     │
@@ -700,12 +721,14 @@ terraform destroy -auto-approve
 
 ### Kafka Pipeline
 
-The app uses three Kafka topics for asynchronous processing:
+The app uses three Kafka topics for asynchronous processing. Each topic has a
+dedicated consumer process (its own container and its own DB connection pool),
+scaled to 3 replicas per topic so the 3 partitions are consumed in parallel:
 
 ```
-Flask app ──┬── after_request ──▶ request-logs topic ──▶ Consumer ──▶ RequestLog table
-            ├── create/update/click ──▶ url-events topic ──▶ Consumer ──▶ Event table
-            └── POST /urls ──▶ url-creates topic ──▶ Consumer ──▶ Url table + Redis
+Flask app ──┬── after_request ───────▶ request-logs topic ──▶ request-log consumer ──▶ RequestLog table
+            ├── create/update/click ─▶ url-events topic ──▶ url-event consumer ──▶ Event table
+            └── POST /urls ──▶ url-creates topic ──▶ url-create consumer ──▶ Url table + Redis + created event
 ```
 
 #### Topic: `request-logs` (drain every 5s)
@@ -951,8 +974,8 @@ QuadroURL/
 │   ├── Dockerfile           # Python 3.13-slim consumer image
 │   ├── requirements.txt     # confluent-kafka, psycopg2, peewee, redis
 │   ├── config.py            # Per-topic configuration (drain intervals, batch sizes)
-│   ├── app.py               # Multi-topic consumer: 3 threads for 3 topics
-│   └── url_create_handler.py # URL creation logic (short code gen, DB insert, Redis status)
+│   ├── app.py               # Single-topic consumer (CONSUMER_TYPE=logs|events|creates), batched drains
+│   └── url_create_handler.py # Batched URL creation (short code gen, DB insert, Redis status)
 ├── tests/                   # 12 test files, ~1100+ lines
 ├── scripts/
 │   ├── test_locust.py       # Locust load test
@@ -980,7 +1003,7 @@ QuadroURL/
 ├── prometheus/prometheus.yml # Scrapes app:8000/prometheus-metrics every 5s
 ├── grafana/                 # Dashboards + provisioning
 ├── promtail/                # Docker log collection to Loki
-├── docker-compose.yml       # 10 services: app, postgres, redis, kafka, zookeeper, request-log-consumer, nginx, prometheus, grafana, loki+promtail
+├── docker-compose.yml       # app, postgres, redis, kafka, zookeeper, 3 consumer services, nginx, prometheus, grafana, loki+promtail
 ├── Dockerfile               # Python 3.13-slim, uv, gunicorn (env-configurable workers)
 ├── run.py                   # Entry point: create_app() + app.run()
 ├── pyproject.toml           # Package metadata (uv)

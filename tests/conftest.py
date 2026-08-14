@@ -1,6 +1,9 @@
 import io
+import os
 
 import pytest
+
+os.environ.setdefault("KAFKA_SYNC_FALLBACK", "1")
 
 from app import create_app
 from app.database import db

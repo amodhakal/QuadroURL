@@ -68,12 +68,18 @@ def create_url():
 
     request_id = str(uuid.uuid4())
 
-    publish_url_create({
+    created = publish_url_create({
         "request_id": request_id,
         "user_id": user_id,
         "original_url": original_url,
         "title": title,
     })
+
+    if created is not None:
+        current_app.logger.info(
+            f"Short URL created with id={created.get('id')} short_code={created.get('short_code')}"
+        )
+        return jsonify(created), 201
 
     current_app.logger.info(
         f"URL create requested: request_id={request_id} user_id={user_id}"
@@ -92,10 +98,11 @@ def get_url_status(request_id):
     import redis
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    r = redis.from_url(redis_url, socket_timeout=2)
-
-    key = f"url-pending:{request_id}"
-    raw = r.get(key)
+    try:
+        r = redis.from_url(redis_url, socket_timeout=2)
+        raw = r.get(f"url-pending:{request_id}")
+    except (redis.RedisError, OSError):
+        abort(503, description="Status store unavailable")
 
     if raw is None:
         abort(404)

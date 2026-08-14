@@ -1,5 +1,11 @@
-import { api } from "@/lib/api"
-import type { ListResponse, ShortCodeResponse, Url } from "@/types/api"
+import { ApiError, api, API_BASE } from "@/lib/api"
+import type {
+  CreateUrlResponse,
+  ListResponse,
+  ShortCodeResponse,
+  Url,
+  UrlStatus,
+} from "@/types/api"
 
 export interface CreateUrlInput {
   user_id: number
@@ -24,10 +30,57 @@ export async function listUrls(params?: {
 }
 
 export async function createUrl(input: CreateUrlInput): Promise<Url> {
-  return api<Url>("/urls", {
+  const created = await api<CreateUrlResponse | Url>("/urls", {
     method: "POST",
     body: JSON.stringify(input),
   })
+
+  if ("id" in created) {
+    return created as Url
+  }
+
+  // Async two-phase create: poll the status endpoint until the URL is ready.
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const status = await getUrlStatus(created.request_id)
+    if (status.status === "ready") {
+      return {
+        id: status.id,
+        user_id: input.user_id,
+        short_code: status.short_code,
+        original_url: status.original_url,
+        title: status.title,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+    }
+    if (status.status === "error") {
+      throw new ApiError(500, status.error)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new ApiError(504, "Timed out waiting for short link to be created")
+}
+
+export async function getUrlStatus(requestId: string): Promise<UrlStatus> {
+  const response = await fetch(`${API_BASE}/urls/${requestId}/status`)
+  if (response.status === 404 || response.status === 503) {
+    return { status: "pending" }
+  }
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`
+    try {
+      const body = await response.json()
+      if (typeof body.error === "string" && body.error.length > 0) {
+        message = body.error
+      }
+    } catch {
+      // Non-JSON error body; keep the default message.
+    }
+    throw new ApiError(response.status, message)
+  }
+  return (await response.json()) as UrlStatus
 }
 
 export async function updateUrl(
