@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sys
 import time
 import traceback
@@ -146,6 +147,27 @@ def create_app():
             CPU_USAGE.set(psutil.cpu_percent(interval=None))
             MEMORY_USAGE_MB.set(round(process.memory_info().rss / 1024 / 1024, 1))
 
+        short_code = ""
+        sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
+            r"^/urls/([^/]+)/redirect$", request.path
+        )
+        if sc_match:
+            short_code = sc_match.group(1)
+
+        client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        user_agent = request.headers.get("User-Agent", "")
+
+        publish_log_event({
+            "user_agent": user_agent,
+            "client_ip": client_ip,
+            "method": request.method,
+            "path": request.path,
+            "status_code": response.status_code,
+            "latency_ms": round(latency_ms, 2),
+            "short_code": short_code,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
         return response
 
     @app.route("/health")
@@ -175,7 +197,11 @@ def create_app():
 
     # Start Discord alert monitor in background
     from app.utils.alerts import start_alerting
+    from app.utils.kafka_producer import flush_producer, publish_log_event
     app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
     start_alerting(app_url=app_url, interval=60)
+
+    import atexit
+    atexit.register(flush_producer)
 
     return app

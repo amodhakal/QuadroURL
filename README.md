@@ -1,8 +1,8 @@
 # QuadroURL
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · Redis · Docker · Locust
+**Stack:** Flask · Peewee ORM · PostgreSQL · Redis · Kafka · Docker · Locust
 
-A URL shortener API with comprehensive caching, metrics, and load testing infrastructure.
+A URL shortener API with comprehensive caching, metrics, request audit logging via Kafka, and load testing infrastructure.
 
 ---
 
@@ -46,7 +46,7 @@ curl http://127.0.0.1/health
 docker compose up --build
 ```
 
-This starts 7 services: app (3 replicas), PostgreSQL, Redis, Nginx, Prometheus, Grafana, and Loki+Promtail.
+This starts 10 services: app (3 replicas), PostgreSQL, Redis, Kafka, Zookeeper, request-log-consumer, Nginx, Prometheus, Grafana, and Loki+Promtail.
 
 ### Without Docker (local development)
 
@@ -646,29 +646,72 @@ terraform destroy -auto-approve
                          └──────┬──────┘
                                 │
                                 ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    app-network                              │
-│  ┌─────────┐      ┌───────────┐      ┌─────────────────┐   │
-│  │  nginx  │─────▶│   app     │─────▶│   postgres      │   │
-│  │ :80     │      │ (3 pods)  │      │   :5432         │   │
-│  └─────────┘      └───────────┘      └─────────────────┘   │
-│                         │                   ▲              │
-│                         │                   │              │
-│                         ▼                   │              │
-│                    ┌───────────┐            │              │
-│                    │   redis   │────────────┘              │
-│                    │  :6379    │                           │
-│                    └───────────┘                           │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐              │
-│  │prometheus │  │  grafana  │  │   loki    │              │
-│  │  :9090    │  │  :3000    │  │  :3100    │              │
-│  └───────────┘  └───────────┘  └───────────┘              │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         app-network                                      │
+│  ┌─────────┐      ┌───────────┐      ┌─────────────────┐               │
+│  │  nginx  │─────▶│   app     │─────▶│   postgres      │               │
+│  │ :80     │      │ (3 pods)  │      │   :5432         │               │
+│  └─────────┘      └─────┬─────┘      └────────▲────────┘               │
+│                         │                      │                        │
+│                         │ publish              │ batch insert           │
+│                         ▼                      │                        │
+│                    ┌───────────┐  poll  ┌──────┴──────────────┐         │
+│                    │   kafka   │◀───────│ request-log-consumer │         │
+│                    │  :9092    │        └─────────────────────┘         │
+│                    └─────┬─────┘                                        │
+│                          │                                              │
+│                    ┌─────┴─────┐      ┌───────────┐                     │
+│                    │ zookeeper │      │   redis   │                     │
+│                    │  :2181    │      │  :6379    │                     │
+│                    └───────────┘      └───────────┘                     │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐                           │
+│  │prometheus │  │  grafana  │  │   loki    │                           │
+│  │  :9090    │  │  :3000    │  │  :3100    │                           │
+│  └───────────┘  └───────────┘  └───────────┘                           │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Kafka Request Audit Logging
+
+Every HTTP request is logged asynchronously through a Kafka pipeline:
+
+```
+Flask after_request → Kafka topic (request-logs) → Consumer service → PostgreSQL (RequestLog table)
+```
+
+**What gets logged per request:**
+
+| Field | Example |
+|-------|---------|
+| `user_agent` | `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...` |
+| `client_ip` | `172.18.0.1` |
+| `method` | `GET` |
+| `path` | `/r/k8Jd9s` |
+| `status_code` | `302` |
+| `latency_ms` | `12.34` |
+| `short_code` | `k8Jd9s` |
+| `created_at` | `2026-08-14T12:00:00+00:00` |
+
+**Consumer behavior:**
+- Polls Kafka every 1 second
+- Drains buffer to PostgreSQL every **30 seconds** (configurable via `DRAIN_INTERVAL`)
+- Also flushes when buffer reaches **1000 messages** (configurable via `BATCH_SIZE`)
+- Graceful shutdown on SIGTERM — flushes remaining buffer before exit
+
+**Configuration (environment variables):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAFKA_BROKER` | `kafka:9092` | Kafka bootstrap server |
+| `KAFKA_TOPIC` | `request-logs` | Topic name |
+| `KAFKA_GROUP` | `request-log-writer` | Consumer group ID |
+| `DRAIN_INTERVAL` | `30` | Seconds between batch inserts |
+| `BATCH_SIZE` | `1000` | Max messages before forced flush |
 
 ### Design Decisions
 
 - **Redis** — L2 cache between app replicas to prevent redundant DB calls. L1 (in-process LRU dict) avoids Redis latency for hot keys. Anti-stampede strategies: single-flight deduplication, probabilistic early expiration, negative caching, TTL jitter.
+- **Kafka** — Decouples request logging from the request path. The Flask app publishes log events non-blocking to a Kafka topic. A separate consumer service drains the topic in batches (every 30s or 1000 messages) and bulk-inserts into PostgreSQL. This prevents DB write latency from affecting request handling and provides replayability.
 - **Nginx** — Reverse proxy and load balancer across app replicas. Connection timeouts (5s connect, 10s read) prevent slow clients from holding connections.
 - **Docker Compose** — Containerized orchestration with health checks, restart policies, and persistent volumes for PostgreSQL, Redis, and Grafana.
 - **Locust** — Python-native load testing (same stack as the app). Weighted task distribution simulates realistic user behavior.
@@ -850,7 +893,8 @@ QuadroURL/
 │   ├── models/
 │   │   ├── user.py          # User(id, username, email, created_at)
 │   │   ├── url.py           # Url(id, user FK, short_code, original_url, title, is_active, timestamps)
-│   │   └── event.py         # Event(id, url FK, user FK, event_type, timestamp, details)
+│   │   ├── event.py         # Event(id, url FK, user FK, event_type, timestamp, details)
+│   │   └── request_log.py   # RequestLog(id, url FK, user_agent, client_ip, method, path, status_code, latency_ms, short_code)
 │   ├── routes/
 │   │   ├── users.py         # CRUD + bulk CSV import
 │   │   ├── urls.py          # CRUD + short-code redirect
@@ -863,8 +907,14 @@ QuadroURL/
 │   └── utils/
 │       ├── alerts.py        # Discord webhook health-check monitor
 │       ├── events.py        # Async event creation via ThreadPoolExecutor
+│       ├── kafka_producer.py # Kafka producer for request log events
 │       ├── logger.py        # JSONFormatter helper
 │       └── ratelimit.py     # Distributed token-bucket rate limiting (Redis Lua)
+├── consumer/                # Kafka consumer service (separate container)
+│   ├── Dockerfile           # Python 3.13-slim consumer image
+│   ├── requirements.txt     # confluent-kafka, psycopg2, peewee
+│   ├── config.py            # Environment variable configuration
+│   └── app.py               # Consumer loop: poll Kafka → buffer → batch insert to PostgreSQL
 ├── tests/                   # 12 test files, ~1100+ lines
 ├── scripts/
 │   ├── test_locust.py       # Locust load test
@@ -892,7 +942,7 @@ QuadroURL/
 ├── prometheus/prometheus.yml # Scrapes app:8000/prometheus-metrics every 5s
 ├── grafana/                 # Dashboards + provisioning
 ├── promtail/                # Docker log collection to Loki
-├── docker-compose.yml       # 7 services: app, postgres, redis, nginx, prometheus, grafana, loki+promtail
+├── docker-compose.yml       # 10 services: app, postgres, redis, kafka, zookeeper, request-log-consumer, nginx, prometheus, grafana, loki+promtail
 ├── Dockerfile               # Python 3.13-slim, uv, gunicorn (env-configurable workers)
 ├── run.py                   # Entry point: create_app() + app.run()
 ├── pyproject.toml           # Package metadata (uv)
@@ -912,6 +962,7 @@ QuadroURL/
 | `DATABASE_USER` | `postgres` | PostgreSQL user |
 | `DATABASE_PASSWORD` | `postgres` | PostgreSQL password |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL for L2 cache |
+| `KAFKA_BROKER` | `kafka:9092` | Kafka bootstrap server |
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode |
 | `APP_URL` | `http://127.0.0.1:5000` | App URL for Discord health monitor |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for alerts |

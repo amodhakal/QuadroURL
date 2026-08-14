@@ -3,6 +3,7 @@ name = "mlh-pe-hackathon"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "confluent-kafka>=2.3.0",
     "faker>=33.0",
     "flask>=3.1",
     "gunicorn>=23.0",
