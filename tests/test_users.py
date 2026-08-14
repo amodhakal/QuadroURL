@@ -181,3 +181,59 @@ def test_bulk_import_replaces_existing_users(client, sample_user, users_csv):
     usernames = {u["username"] for u in data["sample"]}
     assert "testuser" not in usernames
     assert "alice" in usernames
+
+
+def test_bulk_import_wrong_content_type(client):
+    """Bulk import without multipart/form-data content type should be 415."""
+    response = client.post(
+        "/users/bulk",
+        data="username,email\nalice,alice@x.com\n",
+        content_type="application/json",
+    )
+    assert response.status_code == 415
+
+
+def test_get_user_by_id_cache_miss(app, client):
+    """A user created directly in the DB (not via POST) is not in cache,
+    so GET must fetch from DB, set it, and return it."""
+    from app.cache import get_l2
+    from app.models.user import User
+
+    with app.app_context():
+        user = User.create(username="cache_miss", email="miss@example.com")
+
+    # Ensure a real cache miss (L1 and L2 cleared for this key).
+    import app.cache as cache
+    cache._l1.clear()
+    r = get_l2()
+    if r:
+        r.delete(f"user:{user.id}")
+
+    response = client.get(f"/users/{user.id}")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["id"] == user.id
+    assert data["username"] == "cache_miss"
+    assert data["email"] == "miss@example.com"
+
+
+def test_delete_user(client, sample_user):
+    response = client.delete(f"/users/{sample_user.id}")
+    assert response.status_code == 200
+
+
+def test_delete_user_nonexistent(client):
+    response = client.delete("/users/99999")
+    assert response.status_code == 200
+
+
+
+def test_get_user_cached_db_fetch_when_cache_misses(app, client, sample_user, monkeypatch):
+    """When the cache layer returns None for an existing user, get_user_cached
+    falls through to User.get_by_id and returns from the DB (lines 88-90)."""
+    import app.routes.users as users_module
+
+    monkeypatch.setattr(users_module, "get_user", lambda user_id: None)
+    response = client.get(f"/users/{sample_user.id}")
+    assert response.status_code == 200
+    assert response.get_json()["id"] == sample_user.id

@@ -110,3 +110,23 @@ def test_create_event_handles_empty_details(mock_event):
 
     stored_details = mock_event.create.call_args[1]["details"]
     assert json.loads(stored_details) == {}
+
+
+# ---------------------------------------------------------------------------
+# _do_create_event(): retry then log after IntegrityError exhaustion
+# ---------------------------------------------------------------------------
+
+@patch("app.utils.events.Event")
+@patch("app.utils.events.time.sleep")
+def test_do_create_event_logs_after_integrity_retries(mock_sleep, mock_event):
+    """Input: a persistently colliding Event.create. Output: it is retried
+    _MAX_RETRIES times and then logs an error instead of raising."""
+    from peewee import IntegrityError
+
+    from app.utils.events import _MAX_RETRIES, _do_create_event
+
+    mock_event.create.side_effect = IntegrityError("fk violation")
+
+    _do_create_event(1, 2, "created", {"short_code": "abc123"})
+
+    assert mock_event.create.call_count == _MAX_RETRIES

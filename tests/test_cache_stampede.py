@@ -200,6 +200,9 @@ def test_get_user_single_flight_on_miss(monkeypatch):
         time.sleep(0.1)
         return {"id": user_id, "username": "db_user"}
 
+    # Force a full L1/L2 miss so every thread goes through single-flight and
+    # the DB fetch. Real Redis L2 state must not short-circuit get_user.
+    monkeypatch.setattr(cache, "get_l2", lambda: None)
     monkeypatch.setattr(cache, "_fetch_user", mock_fetch_user)
 
     results = []

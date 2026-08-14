@@ -2,6 +2,8 @@
 
 import time
 from flask import jsonify
+from unittest.mock import MagicMock
+import app.utils.ratelimit as ratelimit_module
 from app.utils.ratelimit import rate_limit
 from app.cache import get_l2
 
@@ -62,3 +64,46 @@ def test_rate_limit_fail_open_on_redis_error(app, monkeypatch):
         res = sample_view()
         assert res.status_code == 200
         assert res.get_json() == {"status": "ok"}
+
+
+def test_rate_limit_fail_open_when_script_raises(app, monkeypatch):
+    @rate_limit(capacity=1, refill_rate=1.0)
+    def sample_view():
+        return jsonify(status="ok")
+
+    monkeypatch.setattr(
+        "app.utils.ratelimit.get_l2", lambda: MagicMock()
+    )
+
+    def raising_script(client):
+        raise Exception("boom")
+
+    monkeypatch.setattr(
+        "app.utils.ratelimit.get_script", raising_script
+    )
+
+    with app.test_request_context("/test-script-fail"):
+        res = sample_view()
+        assert res.status_code == 200
+        assert res.get_json() == {"status": "ok"}
+
+
+def test_rate_limit_retry_after_computation(app, monkeypatch):
+    @rate_limit(capacity=1, refill_rate=1.0)
+    def sample_view():
+        return jsonify(status="ok")
+
+    fake_script = MagicMock()
+    fake_script.return_value = [0, 0.0]
+    monkeypatch.setattr(
+        "app.utils.ratelimit.get_script", lambda client: fake_script
+    )
+    monkeypatch.setattr(
+        "app.utils.ratelimit.get_l2", lambda: MagicMock()
+    )
+
+    with app.test_request_context("/test-retry-after"):
+        res = sample_view()
+        assert res.status_code == 429
+        assert res.headers["Retry-After"] == "1"
+        assert res.get_json()["retry_after"] == 1
