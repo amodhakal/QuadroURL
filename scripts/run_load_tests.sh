@@ -21,7 +21,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Defaults (override via flags)
 # ---------------------------------------------------------------------------
-LEVELS="2000,3000,4000,5000"
+LEVELS="3000,4000,5000"
 SPAWN_RATE=100
 RUN_TIME=""                        # if set (e.g. "3m"), used as a FIXED run-time for every level, overriding the auto-computed one below
 PEAK_TIME=60                       # seconds of steady-state load AFTER ramp-up completes, per level (only used when RUN_TIME is unset)
@@ -36,36 +36,6 @@ POST_UP_SETTLE=5                  # small buffer after health check passes
 # ---------------------------------------------------------------------------
 # Arg parsing
 # ---------------------------------------------------------------------------
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --levels) LEVELS="$2"; shift 2 ;;
-    --spawn-rate) SPAWN_RATE="$2"; shift 2 ;;
-    --run-time) RUN_TIME="$2"; shift 2 ;;
-    --peak-time) PEAK_TIME="$2"; shift 2 ;;
-    --processes) PROCESSES="$2"; shift 2 ;;
-    --host) HOST="$2"; HEALTH_URL="${HOST}/health"; shift 2 ;;
-    --locust-file) LOCUST_FILE="$2"; shift 2 ;;
-    -h|--help)
-      echo "Usage: $0 [--levels 2000,3000,4000] [--spawn-rate 100] [--peak-time 60] [--run-time 3m] [--processes -1] [--host http://127.0.0.1] [--locust-file scripts/test_locust.py]"
-      echo ""
-      echo "By default, run-time is computed PER LEVEL as (ramp-up time to reach that many users) + --peak-time"
-      echo "seconds of steady-state load, so higher user counts automatically get a longer test instead of"
-      echo "spending most of a fixed window still ramping up. Pass --run-time explicitly to override this and"
-      echo "use one fixed duration for every level instead."
-      echo ""
-      echo "--processes runs Locust across multiple CPU cores (built-in multiprocessing), avoiding the"
-      echo "single-process generator becoming its own bottleneck at high user counts (watch for Locust's"
-      echo "'CPU usage above 90%' warning -- that means the load generator, not your server, is the ceiling)."
-      echo "Pass -1 to auto-detect and use all available cores, or an explicit worker count. Leave unset for"
-      echo "single-process (fine at lower concurrency levels)."
-      exit 0
-      ;;
-    *)
-      echo "Unknown arg: $1" >&2
-      exit 1
-      ;;
-  esac
-done
 
 mkdir -p "${RESULTS_DIR}"
 SUMMARY_FILE="${RESULTS_DIR}/summary.txt"

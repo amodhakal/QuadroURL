@@ -1,0 +1,8 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,/users [list],CatchResponseError('Failed to list users: 502'),3,2026-08-15T00:07:15Z,2026-08-15T00:07:15Z
+GET,/users/<id> [get],CatchResponseError('Unexpected status: 502'),1,2026-08-15T00:07:15Z,2026-08-15T00:07:15Z
+POST,/urls [create],CatchResponseError('Failed to create URL: 502'),4,2026-08-15T00:07:15Z,2026-08-15T00:08:02Z
+GET,/events,CatchResponseError('Failed to list events: 502'),2,2026-08-15T00:07:15Z,2026-08-15T00:07:15Z
+GET,/urls [list],CatchResponseError('Failed to list URLs: 502'),1,2026-08-15T00:07:15Z,2026-08-15T00:07:15Z
+POST,/users [create],CatchResponseError('Failed to create user: 502'),7,2026-08-15T00:06:52Z,2026-08-15T00:07:18Z
+GET,/health,CatchResponseError('Health check failed: 502'),1,2026-08-15T00:07:15Z,2026-08-15T00:07:15Z
