@@ -13,10 +13,13 @@ from flask import (
 from playhouse.shortcuts import model_to_dict
 
 from app.cache import (
+    clear_list_cache,
     delete_url,
+    get_list_cache,
     get_url,
     get_url_by_short_code,
     get_user,
+    set_list_cache,
     set_url,
     set_url_by_short_code,
 )
@@ -79,6 +82,8 @@ def create_url():
         current_app.logger.info(
             f"Short URL created with id={created.get('id')} short_code={created.get('short_code')}"
         )
+        clear_list_cache("list:urls:")
+        clear_list_cache("list:events:")
         return jsonify(created), 201
 
     current_app.logger.info(
@@ -93,15 +98,14 @@ def create_url():
 
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
 def get_url_status(request_id):
-    import os
-    import json
-    import redis
+    from app.cache import get_l2
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     try:
-        r = redis.from_url(redis_url, socket_timeout=2)
+        r = get_l2()
+        if r is None:
+            abort(503, description="Status store unavailable")
         raw = r.get(f"url-pending:{request_id}")
-    except (redis.RedisError, OSError):
+    except Exception:
         abort(503, description="Status store unavailable")
 
     if raw is None:
@@ -129,6 +133,11 @@ def get_url_status(request_id):
 
 @urls_bp.route("/urls", methods=["GET"])
 def list_urls():
+    cache_key = f"list:urls:{request.query_string.decode()}"
+    cached = get_list_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
 
@@ -159,27 +168,34 @@ def list_urls():
         val = request.args["is_active"].lower()
         query = query.where(Url.is_active == (val == "true"))
 
-    urls = list(query.limit(size).offset(offset))
+    if "before_id" in request.args:
+        query = query.where(Url.id < request.args.get("before_id", type=int))
+        query = query.order_by(Url.id.desc()).limit(size)
+        urls = list(query)
+    else:
+        query = query.order_by(Url.id).limit(size).offset(offset)
+        urls = list(query)
+
     current_app.logger.info(f"Listed {len(urls)} URL records")
 
-    return jsonify(
-        {
-            "kind": "list",
-            "sample": [
-                {
-                    "id": u.id,
-                    "user_id": u.user_id,
-                    "short_code": u.short_code,
-                    "original_url": u.original_url,
-                    "title": u.title,
-                    "is_active": u.is_active,
-                    "created_at": u.created_at.isoformat(),
-                    "updated_at": u.updated_at.isoformat(),
-                }
-                for u in urls
-            ],
-        }
-    )
+    payload = {
+        "kind": "list",
+        "sample": [
+            {
+                "id": u.id,
+                "user_id": u.user_id,
+                "short_code": u.short_code,
+                "original_url": u.original_url,
+                "title": u.title,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat(),
+                "updated_at": u.updated_at.isoformat(),
+            }
+            for u in urls
+        ],
+    }
+    set_list_cache(cache_key, payload)
+    return jsonify(payload)
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
@@ -247,15 +263,22 @@ def update_url(url_id):
     url.save()
     data = format_url(url)
     set_url(url_id, data)
+    clear_list_cache("list:urls:")
+    clear_list_cache("list:events:")
     return jsonify(data)
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
 def delete_url_endpoint(url_id):
+    from app.database import db
+
     try:
         url = Url.get_by_id(url_id)
-        url.delete_instance(recursive=True)
+        with db.atomic():
+            url.delete_instance(recursive=True)
         delete_url(url_id)
+        clear_list_cache("list:urls:")
+        clear_list_cache("list:events:")
         current_app.logger.info(f"Deleted URL id={url_id}")
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for delete id={url_id}")

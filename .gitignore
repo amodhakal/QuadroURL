@@ -36,3 +36,7 @@ judging/
 # Coverage
 .coverage
 venv/
+
+# Terraform
+terraform/.terraform.lock.hcl
+terraform/.terraform/

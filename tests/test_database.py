@@ -30,9 +30,9 @@ def test_db_connection_opens_and_closes(app):
     assert db.is_closed()
 
 
-def test_db_close_rolls_back_on_exception(app):
-    """The teardown handler rolls back (not commits) when the request ends with
-    an exception (covers database.py line 42)."""
+def test_db_close_releases_connection(app):
+    """The teardown handler closes (releases) the connection when the request
+    ends, even on exception (covers database.py _db_close)."""
     from app.database import db
 
     db.connect(reuse_if_open=True)
@@ -43,7 +43,8 @@ def test_db_close_rolls_back_on_exception(app):
             if getattr(fn, "__name__", "") == "_db_close"
         ]
         assert teardowns, "expected _db_close teardown to be registered"
-        # Should not raise; rolls back the open connection.
+        # Should not raise; releases the open connection.
         teardowns[0](BaseException("boom"))
+        assert db.is_closed()
     finally:
         db.close()

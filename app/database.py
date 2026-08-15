@@ -34,12 +34,8 @@ def init_db(app):
         if request.path == "/health":
             return
         db.connect(reuse_if_open=True)
-        db.begin()
 
     @app.teardown_appcontext
     def _db_close(exc):
         if not db.is_closed():
-            if exc is None:
-                db.commit()
-            else:
-                db.rollback()
+            db.close()

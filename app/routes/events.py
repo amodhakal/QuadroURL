@@ -3,7 +3,13 @@ import json
 from flask import Blueprint, abort, current_app, jsonify, request
 from playhouse.shortcuts import model_to_dict
 
-from app.cache import get_url, get_user
+from app.cache import (
+    clear_list_cache,
+    get_list_cache,
+    get_url,
+    get_user,
+    set_list_cache,
+)
 from app.models.event import Event
 
 
@@ -23,6 +29,11 @@ def format_event(event):
 
 @events_bp.route("/events", methods=["GET"])
 def list_events():
+    cache_key = f"list:events:{request.query_string.decode()}"
+    cached = get_list_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
 
@@ -42,8 +53,16 @@ def list_events():
     if "event_type" in request.args:
         query = query.where(Event.event_type == request.args["event_type"])
 
+    if "before_id" in request.args:
+        query = query.where(Event.id < request.args.get("before_id", type=int))
+        query = query.order_by(Event.id.desc()).limit(size)
+        rows = list(query)
+    else:
+        query = query.order_by(Event.id).limit(size).offset(offset)
+        rows = list(query)
+
     result = []
-    for e in query.limit(size).offset(offset):
+    for e in rows:
         details = {}
         try:
             details = json.loads(e.details) if e.details else {}
@@ -59,6 +78,7 @@ def list_events():
                 "details": details,
             }
         )
+    set_list_cache(cache_key, result)
     return jsonify(result)
 
 
@@ -104,4 +124,5 @@ def create_event():
     )
 
     current_app.logger.info(f"Event created: type={event_type} url_id={url_id}")
+    clear_list_cache("list:events:")
     return jsonify(format_event(event)), 201

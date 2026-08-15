@@ -10,13 +10,14 @@ class FakeRedis:
 
 
 class FakeProducer:
-    def __init__(self, fail_first_n=0):
+    def __init__(self, fail_first_n=0, always_fail=False):
         self.calls = 0
         self.fail_first_n = fail_first_n
+        self.always_fail = always_fail
 
     def produce(self, *args, **kwargs):
         self.calls += 1
-        if self.calls <= self.fail_first_n:
+        if self.always_fail or self.calls <= self.fail_first_n:
             raise BufferError("local queue is full")
 
     def poll(self, timeout=0):
@@ -51,7 +52,11 @@ def test_ready_returns_503_when_postgres_down(client, monkeypatch):
     import app.database as database
     import app.utils.kafka_producer as kp
 
-    monkeypatch.setattr(database.db, "execute_sql", lambda *a, **k: (_ for _ in ()).throw(Exception("db down")))
+    # db is a DatabaseProxy (read-only __slots__), so patch the underlying
+    # initialized pool object instead.
+    monkeypatch.setattr(
+        database.db.obj, "execute_sql", lambda *a, **k: (_ for _ in ()).throw(Exception("db down"))
+    )
     monkeypatch.setattr(cache, "get_l2", lambda: FakeRedis())
     monkeypatch.setattr(kp, "get_producer", lambda: FakeProducer())
 
@@ -100,7 +105,7 @@ def test_health_does_not_touch_db(client, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("health must not touch the database")
 
-    monkeypatch.setattr(database.db, "execute_sql", boom)
+    monkeypatch.setattr(database.db.obj, "execute_sql", boom)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.get_json() == {"status": "ok"}
@@ -127,14 +132,14 @@ def test_create_url_returns_202_with_request_id_when_async(client, sample_user, 
 def test_url_status_returns_503_when_status_store_down(client, sample_user, monkeypatch):
     monkeypatch.setenv("KAFKA_SYNC_FALLBACK", "0")
 
+    import app.cache as cache
+
     class DownClient:
         def get(self, key):
             raise redis.RedisError("connection refused")
 
-    def fake_from_url(*a, **k):
-        return DownClient()
-
-    monkeypatch.setattr(redis, "from_url", fake_from_url)
+    # get_url_status resolves get_l2 from app.cache at call time.
+    monkeypatch.setattr(cache, "get_l2", lambda: DownClient())
 
     response = client.get("/urls/whatever/status")
     assert response.status_code == 503
@@ -149,7 +154,9 @@ def test_produce_raises_backpressure_error_when_queue_stays_full(monkeypatch):
     from app.utils import kafka_producer as kp
 
     monkeypatch.setenv("KAFKA_PRODUCE_TIMEOUT", "0.2")
-    monkeypatch.setattr(kp, "_get_producer", lambda: FakeProducer(fail_first_n=1000))
+    monkeypatch.setattr(
+        kp, "_get_producer", lambda: FakeProducer(always_fail=True)
+    )
 
     try:
         kp._produce("test-topic", {"a": 1})

@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -110,6 +111,39 @@ def configure_logging(app):
                 logger.propagate = False
 
 
+def _sample_system_metrics():
+    """Sample CPU/memory into the Prometheus gauges.
+
+    Kept as a plain function so the background thread can loop over it and
+    tests can invoke it directly.
+    """
+    process = psutil.Process(os.getpid())
+    cpu = psutil.cpu_percent(interval=None)
+    CPU_USAGE.set(cpu if cpu is not None else 0.0)
+    MEMORY_USAGE_MB.set(round(process.memory_info().rss / 1024 / 1024, 1))
+
+
+def start_system_metrics_sampler(interval=5):
+    """Update CPU/memory gauges from a background thread.
+
+    Keeps psutil syscalls out of the request hot path.
+    """
+
+    def _run():
+        while True:
+            try:
+                _sample_system_metrics()
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    t = threading.Thread(
+        target=_run, name="system-metrics-sampler", daemon=True
+    )
+    t.start()
+    return t
+
+
 def create_app():
     load_dotenv()
     app = Flask(__name__)
@@ -128,8 +162,6 @@ def create_app():
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
 
-        request._sample_psutil = getattr(request, "_sample_psutil", 0) + 1
-
     @app.after_request
     def track_metrics(response):
         if request.path == "/health":
@@ -145,11 +177,6 @@ def create_app():
 
         if response.status_code >= 400:
             ERROR_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
-
-        if getattr(request, "_sample_psutil", 0) % 10 == 0:
-            process = psutil.Process(os.getpid())
-            CPU_USAGE.set(psutil.cpu_percent(interval=None))
-            MEMORY_USAGE_MB.set(round(process.memory_info().rss / 1024 / 1024, 1))
 
         short_code = ""
         sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
@@ -234,11 +261,17 @@ def create_app():
         _, exc, _ = sys.exc_info()
         return jsonify({"error": str(exc)}), 500
 
+    @app.errorhandler(503)
+    def service_unavailable(error):
+        return jsonify({"error": str(error.description)}), 503
+
     # Start Discord alert monitor in background
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer, publish_log_event
     app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
     start_alerting(app_url=app_url, interval=60)
+
+    start_system_metrics_sampler()
 
     import atexit
     atexit.register(flush_producer)

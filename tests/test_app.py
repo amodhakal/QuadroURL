@@ -126,28 +126,16 @@ def test_list_handler_truncates_cap_at_200(app):
         log_records.clear()
 
 
-def test_after_request_psutil_gauges_set_every_10th_request(app):
-    # Covers lines 145-147: when the per-request sample counter is a multiple
-    # of 10, CPU/memory gauges are populated.
-    import time
-    from flask import jsonify, request
-
+def test_system_metrics_sampler_populates_gauges(app):
+    # System gauges are populated by the background sampler (not in the
+    # request hot path). Invoke the sampler body directly.
+    from app import _sample_system_metrics
     from app.routes.prometheus import CPU_USAGE, MEMORY_USAGE_MB
 
     CPU_USAGE._value.set(None)
     MEMORY_USAGE_MB._value.set(None)
 
-    track_metrics = next(
-        f
-        for f in app.after_request_funcs.get(None, [])
-        if getattr(f, "__name__", "") == "track_metrics"
-    )
-
-    with app.test_request_context("/users"):
-        request._start_time = time.time()
-        request._sample_psutil = 10
-        resp = app.make_response(jsonify({"status": "ok"}))
-        track_metrics(resp)
+    _sample_system_metrics()
 
     assert CPU_USAGE._value.get() is not None
     assert isinstance(CPU_USAGE._value.get(), float)

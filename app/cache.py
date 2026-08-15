@@ -472,3 +472,28 @@ def delete_url_by_short_code(short_code):
     key = f"short_code:{short_code}"
     _l1_delete(key)
     _l2_fire_and_forget(lambda client: client.delete(key))
+
+
+# ---------------------------------------------------------------------------
+# List response cache (short TTL, L1 only)
+# ---------------------------------------------------------------------------
+
+# List endpoints (GET /users, /urls, /events) are hot under load but their
+# results change on writes.  A short L1 TTL keeps them off Postgres almost
+# entirely while bounding staleness to a few seconds.
+_LIST_TTL = 5
+
+
+def get_list_cache(key):
+    value, _ = _l1_get(key)
+    if value is not None:
+        return value
+    return None
+
+
+def set_list_cache(key, value, ttl=_LIST_TTL):
+    _l1_set(key, value, ttl)
+
+
+def clear_list_cache(pattern):
+    _l1_clear(pattern)

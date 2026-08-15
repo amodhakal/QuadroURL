@@ -51,7 +51,8 @@ resource "aws_ecs_task_definition" "app" {
       { name = "DATABASE_PASSWORD", value = var.db_password },
       { name = "REDIS_URL", value = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0" },
       { name = "GUNICORN_WORKERS", value = "8" },
-      { name = "GUNICORN_THREADS", value = "8" }
+      { name = "GUNICORN_THREADS", value = "8" },
+      { name = "KAFKA_BROKER", value = "PLAINTEXT://${aws_instance.kafka.private_ip}:9092" }
     ]
 
     logConfiguration = {

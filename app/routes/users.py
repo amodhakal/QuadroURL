@@ -5,7 +5,15 @@ from flask import Blueprint, abort, current_app, jsonify, request
 from peewee import chunked
 from playhouse.shortcuts import model_to_dict
 
-from app.cache import clear_all_users, delete_user, get_user, set_user
+from app.cache import (
+    clear_all_users,
+    clear_list_cache,
+    delete_user,
+    get_list_cache,
+    get_user,
+    set_list_cache,
+    set_user,
+)
 from app.database import db
 from app.models.user import User
 
@@ -44,36 +52,43 @@ def bulk_import_users():
             User.insert_many(batch).execute()
 
     clear_all_users()
+    clear_list_cache("list:users:")
 
     return jsonify({"imported": len(rows)}), 200
 
 
 @users_bp.route("/users", methods=["GET"])
 def list_users():
+    cache_key = f"list:users:{request.query_string.decode()}"
+    cached = get_list_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
 
     offset = (page - 1) * per_page
     users = (
         User.select(User.id, User.username, User.email, User.created_at)
+        .order_by(User.id)
         .limit(per_page)
         .offset(offset)
     )
 
-    return jsonify(
-        {
-            "kind": "list",
-            "sample": [
-                {
-                    "id": u.id,
-                    "username": u.username,
-                    "email": u.email,
-                    "created_at": u.created_at.isoformat(),
-                }
-                for u in users
-            ],
-        }
-    )
+    payload = {
+        "kind": "list",
+        "sample": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "created_at": u.created_at.isoformat(),
+            }
+            for u in users
+        ],
+    }
+    set_list_cache(cache_key, payload)
+    return jsonify(payload)
 
 
 @users_bp.route("/users/<int:user_id>", methods=["GET"])
@@ -113,6 +128,7 @@ def create_user():
 
     result = model_to_dict(user)
     set_user(user.id, result)
+    clear_list_cache("list:users:")
     return jsonify(result), 201
 
 
@@ -136,6 +152,7 @@ def update_user(user_id):
     user.save()
     data = model_to_dict(user)
     set_user(user_id, data)
+    clear_list_cache("list:users:")
     return jsonify(data)
 
 
@@ -145,6 +162,7 @@ def delete_user_endpoint(user_id):
         user = User.get_by_id(user_id)
         user.delete_instance()
         delete_user(user_id)
+        clear_list_cache("list:users:")
         current_app.logger.info(f"Deleted user id={user_id}")
     except User.DoesNotExist:
         current_app.logger.warning(f"User not found for delete id={user_id}")
