@@ -1,8 +1,19 @@
 # QuadroURL
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · Redis · Kafka · Docker · Locust
+**Stack:** Python · Flask · Gunicorn · Peewee ORM · PostgreSQL · Redis · Kafka · React + TypeScript (Vite) · Docker · Terraform / AWS (ECS Fargate, RDS, ElastiCache, ALB) · Grafana / Loki / Promtail / Prometheus · Locust
 
 A URL shortener API with comprehensive caching, metrics, request audit logging via Kafka, and load testing infrastructure.
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Infra / IaC | Terraform + AWS — ECS Fargate Spot, RDS PostgreSQL 15, ElastiCache Redis 7, Application Load Balancer, VPC, ECR, IAM; Kafka on a Spot EC2 instance |
+| Observability | Loki, Grafana, Promtail, Prometheus |
+| Data | PostgreSQL, Redis, Kafka |
+| Core app | Python (Flask + Gunicorn) |
+| Web client | React + TypeScript (Vite) |
+| Load test | Locust |
 
 ---
 
@@ -46,7 +57,7 @@ curl http://127.0.0.1/health
 docker compose up --build
 ```
 
-This starts 12 services: app (3 replicas), PostgreSQL, Redis, Kafka, Zookeeper, three consumer services (request-log, url-event, url-create, 3 replicas each), Nginx, Prometheus, Grafana, and Loki+Promtail.
+This starts 14 services: client (React SPA), app (3 replicas), PostgreSQL, Redis, Kafka, Zookeeper, three consumer services (request-log, url-event, url-create, 3 replicas each), Nginx, Prometheus, Grafana, and Loki+Promtail.
 
 ### Without Docker (local development)
 
@@ -634,20 +645,27 @@ A complete Terraform setup for load testing at ~13,000 req/s with zero cross-net
 ┌───────────────────────── VPC (10.0.0.0/16) ─────────────────────────┐
 │                                                                      │
 │  Public Subnets:                                                     │
-│  ┌────────────┐     ┌────────────────────────────────┐               │
-│  │    ALB     │────▶│  ECS Fargate Spot (4 tasks)    │               │
-│  └────────────┘     └───────────────┬────────────────┘               │
+│  ┌────────────┐     ┌──────────────────────────────────────────┐     │
+│  │    ALB     │────▶│ ECS Fargate Spot                          │     │
+│  │   (:80)    │     │  • app (4 tasks)                          │     │
+│  └────────────┘     │  • url-create consumer  (3 repl)          │     │
+│                     │  • url-event consumer    (3 repl)          │     │
+│                     │  • request-log consumer  (3 repl)          │     │
+│                     └───────────────┬──────────────────────────┘     │
 │                                     │                                │
-│  Private Subnets:                   │                                │
+│  Private Subnets:                   │ batch insert                   │
 │  ┌───────────────────┐     ┌────────▼─────────────┐                  │
 │  │ PostgreSQL (RDS)  │     │ ElastiCache (Redis)  │                  │
 │  └───────────────────┘     └──────────────────────┘                  │
 │                                                                      │
-│  ┌───────────────────────────────────────────┐                        │
-│  │ EC2 (Locust load tester) - c6i.xlarge Spot│                        │
-│  └───────────────────────────────────────────┘                        │
+│  ┌──────────────────────────────────────┐   ┌──────────────────────┐  │
+│  │ EC2 Spot: Kafka 3.8 (KRaft)          │   │ EC2 Spot loadtester  │  │
+│  │ app publishes → consumers subscribe  │   │ c6i.xlarge (Locust)  │  │
+│  └──────────────────────────────────────┘   └──────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+Kafka runs on a single Spot EC2 instance (KRaft mode, replication factor 1). The Locust load tester runs inside the same VPC and targets the ALB (zero cross-AZ data cost).
 
 **Estimated cost:** ~$0.53/hour (~$1.06 for a 2-hour test run).
 
@@ -690,6 +708,12 @@ terraform destroy -auto-approve
 ```
                          ┌─────────────┐
                          │    User     │
+                         └──────┬──────┘
+                                │  browser
+                                ▼
+                         ┌─────────────┐
+                         │   client   │  React + TypeScript SPA
+                         │  (nginx :80)│  proxies /api → app
                          └──────┬──────┘
                                 │
                                 ▼
@@ -970,6 +994,7 @@ QuadroURL/
 │       ├── kafka_producer.py # Kafka producer for all topics (logs, events, url-creates)
 │       ├── logger.py        # JSONFormatter helper
 │       └── ratelimit.py     # Distributed token-bucket rate limiting (Redis Lua)
+├── client/                 # React + TypeScript SPA (Vite), nginx API proxy, TanStack Query
 ├── consumer/                # Kafka consumer service (separate container)
 │   ├── Dockerfile           # Python 3.13-slim consumer image
 │   ├── requirements.txt     # confluent-kafka, psycopg2, peewee, redis
