@@ -45,6 +45,12 @@ from app.utils.validation import (
 urls_bp = Blueprint("urls", __name__)
 
 MAX_URL_LENGTH = 2048
+# Postgres VARCHAR(255) storage limit for Url.original_url/Url.title (#238).
+# Longer values raise DataError inside the sync fallback and surface as a
+# misleading 500, so reject them early with a 400. URL semantics still cap at
+# MAX_URL_LENGTH via is_valid_url; the DB cap (255) is enforced explicitly.
+MAX_ORIGINAL_URL_LENGTH = 255
+MAX_TITLE_LENGTH = 255
 
 
 def is_valid_url(value: str) -> bool:
@@ -173,11 +179,27 @@ def create_url():
 
     require_str(original_url, "original_url must be a string", "original_url must be a string")
 
+    if len(original_url) > MAX_URL_LENGTH:
+        current_app.logger.warning(
+            f"Rejected overlong original_url: length={len(original_url)}"
+        )
+        abort(400, description="original_url must not exceed 2048 characters in length")
+
+    if len(original_url) > MAX_ORIGINAL_URL_LENGTH:
+        current_app.logger.warning(
+            f"Rejected overlong original_url: length={len(original_url)}"
+        )
+        abort(400, description="original_url must not exceed 255 characters in length")
+
     if not is_valid_url(original_url):
         current_app.logger.warning(f"Rejected unsafe original_url: {original_url[:80]}")
         abort(400, description="original_url must be a valid http(s) URL")
 
     require_str(title, "title must be a string", "title must be a string")
+
+    if len(title) > MAX_TITLE_LENGTH:
+        current_app.logger.warning(f"Rejected overlong title: length={len(title)}")
+        abort(400, description="title must not exceed 255 characters in length")
 
     expires_at = parse_expires_at(data.get("expires_at"))
 
@@ -411,6 +433,11 @@ def update_url(url_id):
 
     if "title" in data:
         require_non_empty_str(data["title"], "title must be a non-empty string")
+        if len(data["title"].strip()) > MAX_TITLE_LENGTH:
+            current_app.logger.warning(
+                f"Rejected overlong title on update: length={len(data['title'].strip())}"
+            )
+            abort(400, description="title must not exceed 255 characters in length")
         url.title = data["title"].strip()
         create_event(
             url.id,
