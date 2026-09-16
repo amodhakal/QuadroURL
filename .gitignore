@@ -40,3 +40,7 @@ venv/
 # Terraform
 terraform/.terraform.lock.hcl
 terraform/.terraform/
+
+# Load-test artifacts (generated results + reports; keep sources like *.py/locustfiles tracked)
+loadtests/results_*/
+loadtests/*.pdf
