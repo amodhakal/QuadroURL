@@ -510,22 +510,46 @@ def resolve_short_code_or_404(short_code):
 
 
 def track_click(data, short_code):
-    """Best-effort click tracking: skips bots, never breaks redirects (#147)."""
+    """Best-effort click tracking: skips bots, never breaks redirects (#147).
+
+    Click payloads carry referrer/user-agent/visitor data for #177 analytics;
+    parsing failures degrade to "direct"/Unknown without breaking redirects.
+    """
     try:
         user_agent = request.headers.get("User-Agent", "")
+        referrer = request.headers.get("Referer", "") or ""
     except Exception:
-        user_agent = ""
+        user_agent, referrer = "", ""
     if is_bot_user_agent(user_agent):
         return
     try:
+        from app.routes.analytics import classify_user_agent
+
         create_event(
             data["id"],
             data["user_id"],
             "click",
-            {"short_code": short_code},
+            {
+                "short_code": short_code,
+                "referrer": referrer,
+                "user_agent": classify_user_agent(user_agent),
+                "visitor": stable_visitor_id(),
+            },
         )
     except Exception:
         current_app.logger.exception("Click tracking failed (redirect unaffected)")
+
+
+def stable_visitor_id():
+    """Rotate daily, hash client traits; never store a raw IP address."""
+    import hashlib
+    from datetime import datetime, timezone
+
+    from app.utils.request_ctx import get_client_ip
+
+    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    traits = f"{get_client_ip()}|{request.headers.get('User-Agent', '')}"
+    return f"{day}:{hashlib.sha256(traits.encode('utf-8')).hexdigest()[:32]}"
 
 
 @urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])

@@ -26,6 +26,11 @@ def app(monkeypatch):
             instance.register_blueprint(bp)
             instance.register_blueprint(bp, url_prefix="/api/v1", name=f"{bp.name}_v1")
 
+        from app.routes.analytics import analytics_bp
+
+        instance.register_blueprint(analytics_bp)
+        instance.register_blueprint(analytics_bp, url_prefix="/api/v1", name="analytics_v1")
+
         from app.routes.openapi import docs_bp
         from app.routes.logs import logs_bp
         from app.routes.fail import fail_bp
