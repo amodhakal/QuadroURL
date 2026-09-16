@@ -4,6 +4,8 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { shortLink } from "@/api/urls"
+import { LinkPreview } from "@/components/app/LinkPreview"
+import { parseDestination } from "@/lib/link-tools"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -113,13 +115,17 @@ export function UrlTable() {
                   </TableCell>
                   <TableCell className="max-w-[240px]">
                     <a
-                      href={url.original_url}
+                      href={parseDestination(url.original_url)?.href}
                       target="_blank"
                       rel="noreferrer"
                       className="block truncate text-sm text-muted-foreground transition-colors hover:text-foreground"
                     >
                       {url.original_url}
                     </a>
+                    <details className="mt-2 whitespace-normal">
+                      <summary className="cursor-pointer text-xs underline underline-offset-4">Preview {url.short_code}</summary>
+                      <div className="mt-2"><LinkPreview url={url.original_url} title={url.title} /></div>
+                    </details>
                   </TableCell>
                   <TableCell>
                     <OwnerCell userId={url.user_id} />

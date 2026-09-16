@@ -1,9 +1,12 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Link2 } from "lucide-react"
-import { useForm } from "react-hook-form"
+import { useState } from "react"
+import { useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { LinkPreview } from "@/components/app/LinkPreview"
+import { buildCampaignUrl, parseDestination, utmFields, type UtmValues } from "@/lib/link-tools"
 import { Button } from "@/components/ui/button"
 import {
   Form,
@@ -28,7 +31,10 @@ import type { Url } from "@/types/api"
 
 const formSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(120, "Title is too long"),
-  original_url: z.string().trim().min(1, "URL is required").url("Enter a valid URL"),
+  original_url: z.string().trim().min(1, "URL is required").refine(
+    (value) => parseDestination(value) !== null,
+    "Enter an HTTP or HTTPS URL without embedded credentials",
+  ),
   user_id: z.string().min(1, "Select an owner"),
 })
 
@@ -41,6 +47,8 @@ export function UrlForm({
 }) {
   const { data: users } = useUsers()
   const createUrl = useCreateUrl()
+  const [campaignEnabled, setCampaignEnabled] = useState(false)
+  const [campaign, setCampaign] = useState<UtmValues>({})
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -51,15 +59,29 @@ export function UrlForm({
     },
   })
 
+  const originalUrl = useWatch({ control: form.control, name: "original_url" })
+  const title = useWatch({ control: form.control, name: "title" })
+  const destination = buildCampaignUrl(originalUrl, campaignEnabled ? campaign : undefined)
+
   async function onSubmit(values: FormValues) {
+    const originalUrl = buildCampaignUrl(
+      values.original_url,
+      campaignEnabled ? campaign : undefined,
+    )
+    if (!originalUrl) {
+      form.setError("original_url", { message: "Enter a valid HTTP or HTTPS destination URL" })
+      return
+    }
     try {
       const url = await createUrl.mutateAsync({
         title: values.title,
-        original_url: values.original_url,
+        original_url: originalUrl,
         user_id: Number(values.user_id),
       })
       toast.success("Short link created")
       form.reset()
+      setCampaign({})
+      setCampaignEnabled(false)
       onCreated?.(url)
     } catch (error) {
       toast.error(
@@ -125,6 +147,45 @@ export function UrlForm({
             </FormItem>
           )}
         />
+        <fieldset className="space-y-4 rounded-xl border p-4" disabled={createUrl.isPending}>
+          <legend className="px-1 text-sm font-medium">Campaign tracking</legend>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={campaignEnabled}
+              onChange={(event) => setCampaignEnabled(event.target.checked)}
+              className="size-4 accent-primary"
+            />
+            Add UTM parameters
+          </label>
+          {campaignEnabled && (
+            <>
+              <p id="utm-help" className="text-xs leading-relaxed text-muted-foreground">
+                Blank fields keep the first existing UTM value. Filled fields replace it;
+                duplicate UTM parameters are removed. Other values and fragments are preserved.
+                Tracking may change query encoding; avoid using it on signed URLs.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {utmFields.map(({ key, label, placeholder }) => (
+                  <div key={key} className="space-y-1.5">
+                    <label htmlFor={key} className="text-sm font-medium">{label}</label>
+                    <Input
+                      id={key}
+                      value={campaign[key] ?? ""}
+                      placeholder={placeholder}
+                      aria-describedby="utm-help"
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setCampaign((current) => ({ ...current, [key]: value }))
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </fieldset>
+        <LinkPreview url={destination ?? originalUrl} title={title} />
         <Button type="submit" disabled={createUrl.isPending} className="mt-2">
           {createUrl.isPending ? null : <Link2 />}
           {createUrl.isPending ? "Shortening…" : "Shorten link"}
