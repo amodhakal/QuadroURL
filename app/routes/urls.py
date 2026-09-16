@@ -282,8 +282,15 @@ def update_url(url_id):
         current_app.logger.warning("Invalid JSON received for update_url")
         abort(400, description="Invalid JSON")
 
+    allowed = {"title", "is_active"}
+    unknown = set(data) - allowed
+    if unknown:
+        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+
     if "title" in data:
-        url.title = data["title"]
+        if not isinstance(data["title"], str) or not data["title"].strip():
+            abort(400, description="title must be a non-empty string")
+        url.title = data["title"].strip()
         create_event(
             url.id,
             url.user_id,
@@ -296,6 +303,8 @@ def update_url(url_id):
         current_app.logger.info(f"Updated title for url id={url.id}")
 
     if "is_active" in data:
+        if not isinstance(data["is_active"], bool):
+            abort(400, description="is_active must be a boolean")
         url.is_active = data["is_active"]
         create_event(
             url.id,

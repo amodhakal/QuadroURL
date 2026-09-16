@@ -120,11 +120,19 @@ def create_user():
     if not email or not isinstance(email, str) or not email.strip():
         abort(400, description="email must be a non-empty string")
 
+    # Prevent mass assignment: only allow whitelisted fields (#103).
+    allowed = {"username", "email"}
+    unknown = set(data) - allowed
+    if unknown:
+        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+
     try:
-        user = User.create(**data)
+        user = User.create(
+            username=username.strip(), email=email.strip()
+        )
     except Exception as e:
         current_app.logger.exception(f"Failed to create user: {e}")
-        abort(400, description=str(e))
+        abort(400, description="Could not create user (duplicate?)")
 
     result = model_to_dict(user)
     set_user(user.id, result)
@@ -144,12 +152,25 @@ def update_user(user_id):
         current_app.logger.warning("Invalid JSON received for update_user")
         abort(400, description="Invalid JSON")
 
-    if "username" in data:
-        user.username = data["username"]
-    if "email" in data:
-        user.email = data["email"]
+    allowed = {"username", "email"}
+    unknown = set(data) - allowed
+    if unknown:
+        abort(400, description=f"Unknown fields: {sorted(unknown)}")
 
-    user.save()
+    if "username" in data:
+        if not isinstance(data["username"], str) or not data["username"].strip():
+            abort(400, description="username must be a non-empty string")
+        user.username = data["username"].strip()
+    if "email" in data:
+        if not isinstance(data["email"], str) or not data["email"].strip():
+            abort(400, description="email must be a non-empty string")
+        user.email = data["email"].strip()
+
+    try:
+        user.save()
+    except Exception:
+        current_app.logger.exception(f"Failed to update user id={user_id}")
+        abort(400, description="Could not update user (duplicate?)")
     data = model_to_dict(user)
     set_user(user_id, data)
     clear_list_cache("list:users:")
