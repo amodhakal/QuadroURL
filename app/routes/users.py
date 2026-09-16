@@ -80,8 +80,8 @@ def bulk_import_users():
     imported = 0
     with db.atomic():
         for batch in chunked(rows, 100):
-            User.insert_many(batch).on_conflict_ignore().execute()
-            imported += len(batch)
+            inserted = User.insert_many(batch).on_conflict_ignore().as_rowcount().execute()
+            imported += inserted
 
     clear_all_users()
     clear_list_cache("list:users:")
