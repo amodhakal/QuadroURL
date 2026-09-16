@@ -41,20 +41,44 @@ def bulk_import_users():
         current_app.logger.warning("Invalid file type for bulk import")
         abort(400, description="Invalid file type, expected .csv")
 
-    reader = csv.DictReader(file.stream.read().decode("utf-8").splitlines())
-    rows = [{k: v for k, v in row.items() if k != "id"} for row in reader]
+    try:
+        raw = file.stream.read()
+        if len(raw) > 5 * 1024 * 1024:
+            abort(400, description="CSV too large (max 5MB)")
+        text = raw.decode("utf-8")
+    except Exception:
+        abort(400, description="Could not read CSV file")
 
-    db.drop_tables([User], cascade=True)
-    db.create_tables([User])
+    reader = csv.DictReader(text.splitlines())
+    if not reader.fieldnames or "username" not in reader.fieldnames or "email" not in reader.fieldnames:
+        abort(400, description="CSV must include username and email columns")
 
+    rows = []
+    for i, row in enumerate(reader, start=1):
+        if len(rows) >= 5000:
+            abort(400, description="CSV too many rows (max 5000)")
+        username = (row.get("username") or "").strip()
+        email = (row.get("email") or "").strip()
+        if not username or not email:
+            abort(400, description=f"Row {i}: username and email are required")
+        # Tolerate unexpected columns by whitelisting (#130).
+        rows.append({"username": username, "email": email})
+
+    if not rows:
+        return jsonify({"imported": 0}), 200
+
+    # Non-destructive: insert new rows, skip existing usernames/emails (#107).
+    # Never drop tables here — the old code deleted urls/events via cascade.
+    imported = 0
     with db.atomic():
         for batch in chunked(rows, 100):
-            User.insert_many(batch).execute()
+            User.insert_many(batch).on_conflict_ignore().execute()
+            imported += len(batch)
 
     clear_all_users()
     clear_list_cache("list:users:")
 
-    return jsonify({"imported": len(rows)}), 200
+    return jsonify({"imported": imported}), 200
 
 
 @users_bp.route("/users", methods=["GET"])
