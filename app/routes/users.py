@@ -17,6 +17,12 @@ from app.cache import (
 from app.database import db
 from app.models.user import User
 from app.utils.ratelimit import rate_limit
+from app.utils.validation import (
+    reject_unknown_fields,
+    require_json,
+    require_non_empty_str,
+    validate_page_params,
+)
 
 users_bp = Blueprint("users", __name__)
 
@@ -87,10 +93,7 @@ def bulk_import_users():
 def list_users():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
-    if page is None or page < 1:
-        abort(400, description="page must be >= 1")
-    if per_page is None or per_page < 1 or per_page > 100:
-        abort(400, description="per_page must be between 1 and 100")
+    page, per_page = validate_page_params(page, per_page)
 
     cache_key = f"list:users:page={page}&per_page={per_page}"
     cached = get_list_cache(cache_key)
@@ -138,24 +141,16 @@ def get_user_cached(user_id):
 @users_bp.route("/users", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
 def create_user():
-    data = request.get_json(silent=True)
-    if not data:
-        current_app.logger.warning("Invalid JSON received for create_user")
-        abort(400, description="Invalid JSON")
+    data = require_json("Invalid JSON received for create_user")
 
     username = data.get("username")
     email = data.get("email")
 
-    if not username or not isinstance(username, str) or not username.strip():
-        abort(400, description="username must be a non-empty string")
-    if not email or not isinstance(email, str) or not email.strip():
-        abort(400, description="email must be a non-empty string")
+    require_non_empty_str(username, "username must be a non-empty string")
+    require_non_empty_str(email, "email must be a non-empty string")
 
     # Prevent mass assignment: only allow whitelisted fields (#103).
-    allowed = {"username", "email"}
-    unknown = set(data) - allowed
-    if unknown:
-        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+    reject_unknown_fields(data, {"username", "email"})
 
     try:
         user = User.create(username=username.strip(), email=email.strip())
@@ -176,23 +171,15 @@ def update_user(user_id):
     except User.DoesNotExist:
         abort(404)
 
-    data = request.get_json(silent=True)
-    if not data:
-        current_app.logger.warning("Invalid JSON received for update_user")
-        abort(400, description="Invalid JSON")
+    data = require_json("Invalid JSON received for update_user")
 
-    allowed = {"username", "email"}
-    unknown = set(data) - allowed
-    if unknown:
-        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+    reject_unknown_fields(data, {"username", "email"})
 
     if "username" in data:
-        if not isinstance(data["username"], str) or not data["username"].strip():
-            abort(400, description="username must be a non-empty string")
+        require_non_empty_str(data["username"], "username must be a non-empty string")
         user.username = data["username"].strip()
     if "email" in data:
-        if not isinstance(data["email"], str) or not data["email"].strip():
-            abort(400, description="email must be a non-empty string")
+        require_non_empty_str(data["email"], "email must be a non-empty string")
         user.email = data["email"].strip()
 
     try:

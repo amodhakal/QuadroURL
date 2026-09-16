@@ -29,6 +29,15 @@ from app.models.url import Url
 from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
 from app.utils.ratelimit import rate_limit
+from app.utils.validation import (
+    reject_unknown_fields,
+    require_bool,
+    require_int,
+    require_json,
+    require_non_empty_str,
+    require_str,
+    validate_offset_params,
+)
 
 
 urls_bp = Blueprint("urls", __name__)
@@ -91,31 +100,21 @@ def format_url(url):
 @urls_bp.route("/urls", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
 def create_url():
-    data = request.get_json(silent=True)
-
-    if not data:
-        current_app.logger.warning("Invalid JSON received for create_url")
-        abort(400, description="Invalid JSON")
+    data = require_json("Invalid JSON received for create_url")
 
     user_id = data.get("user_id")
     original_url = data.get("original_url")
     title = data.get("title")
 
-    if not user_id or not isinstance(user_id, int):
-        current_app.logger.warning("user_id must be an integer")
-        abort(400, description="user_id must be an integer")
+    require_int(user_id, "user_id must be an integer", "user_id must be an integer")
 
-    if not original_url or not isinstance(original_url, str):
-        current_app.logger.warning("original_url must be a string")
-        abort(400, description="original_url must be a string")
+    require_str(original_url, "original_url must be a string", "original_url must be a string")
 
     if not is_valid_url(original_url):
         current_app.logger.warning(f"Rejected unsafe original_url: {original_url[:80]}")
         abort(400, description="original_url must be a valid http(s) URL")
 
-    if not title or not isinstance(title, str):
-        current_app.logger.warning("title must be a string")
-        abort(400, description="title must be a string")
+    require_str(title, "title must be a string", "title must be a string")
 
     if get_user(user_id) is None:
         current_app.logger.warning("User not found")
@@ -220,10 +219,7 @@ def get_url_status(request_id):
 def list_urls():
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
-    if offset is None or offset < 0:
-        abort(400, description="offset must be >= 0")
-    if size is None or size < 1 or size > 100:
-        abort(400, description="size must be between 1 and 100")
+    offset, size = validate_offset_params(offset, size)
 
     # Canonical cache key from validated params only (#111): bounds key
     # cardinality instead of caching arbitrary raw query strings.
@@ -323,20 +319,12 @@ def update_url(url_id):
         current_app.logger.warning(f"URL not found for update id={url_id}")
         abort(404)
 
-    data = request.get_json(silent=True)
+    data = require_json("Invalid JSON received for update_url")
 
-    if not data:
-        current_app.logger.warning("Invalid JSON received for update_url")
-        abort(400, description="Invalid JSON")
-
-    allowed = {"title", "is_active"}
-    unknown = set(data) - allowed
-    if unknown:
-        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+    reject_unknown_fields(data, {"title", "is_active"})
 
     if "title" in data:
-        if not isinstance(data["title"], str) or not data["title"].strip():
-            abort(400, description="title must be a non-empty string")
+        require_non_empty_str(data["title"], "title must be a non-empty string")
         url.title = data["title"].strip()
         create_event(
             url.id,
@@ -350,8 +338,7 @@ def update_url(url_id):
         current_app.logger.info(f"Updated title for url id={url.id}")
 
     if "is_active" in data:
-        if not isinstance(data["is_active"], bool):
-            abort(400, description="is_active must be a boolean")
+        require_bool(data["is_active"], "is_active must be a boolean")
         url.is_active = data["is_active"]
         create_event(
             url.id,
