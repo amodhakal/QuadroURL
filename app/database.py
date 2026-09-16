@@ -26,9 +26,11 @@ def init_db(app):
     )
     db.initialize(database)
 
-    from app.models import User, Url, Event, RequestLog, ApiKey
+    from migrations_runner import upgrade
 
-    db.create_tables([User, Url, Event, RequestLog, ApiKey], safe=True)
+    from app.models import User, Url, Event, RequestLog, ApiKey  # noqa: F401 (models namespace)
+
+    upgrade(database, models)
 
     @app.before_request
     def _db_connect():
