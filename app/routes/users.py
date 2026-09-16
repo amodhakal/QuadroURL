@@ -1,5 +1,4 @@
 import csv
-import os
 
 from flask import Blueprint, abort, current_app, jsonify, request
 from peewee import chunked
@@ -28,8 +27,6 @@ from app.utils.validation import (
 )
 
 users_bp = Blueprint("users", __name__)
-
-DATA_DIR = os.path.join("./data")
 
 
 @users_bp.route("/users/bulk", methods=["POST"])
