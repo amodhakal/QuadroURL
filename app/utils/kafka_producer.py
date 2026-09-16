@@ -9,6 +9,26 @@ logger = logging.getLogger("quadroPE.kafka")
 
 _producer = None
 
+# Delivery outcomes reported via producer callbacks (#139). Failures are
+# logged with topic/partition context instead of vanishing silently.
+_delivery_ok = 0
+_delivery_failed = 0
+
+
+def _on_delivery(err, msg):
+    global _delivery_ok, _delivery_failed
+    if err is not None:
+        _delivery_failed += 1
+        logger.error(
+            f"Kafka delivery failed topic={msg.topic() if msg else '?'}: {err}"
+        )
+    else:
+        _delivery_ok += 1
+
+
+def delivery_stats():
+    return {"delivered": _delivery_ok, "failed": _delivery_failed}
+
 
 class ProducerBackpressureError(Exception):
     """Raised when the Kafka producer queue stays full despite retrying."""
@@ -50,7 +70,7 @@ def _produce(topic, data):
     deadline = time.time() + float(os.environ.get("KAFKA_PRODUCE_TIMEOUT", 5.0))
     while True:
         try:
-            producer.produce(topic, value=payload)
+            producer.produce(topic, value=payload, callback=_on_delivery)
             producer.poll(0)
             return
         except BufferError:

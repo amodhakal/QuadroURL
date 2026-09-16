@@ -149,6 +149,29 @@ def start_system_metrics_sampler(interval=5):
     return t
 
 
+_kafka_check_cache = {"result": None, "at": 0.0}
+_kafka_check_lock = threading.Lock()
+KAFKA_CHECK_TTL_S = 10.0
+
+
+def _cached_kafka_check(app, get_producer_fn):
+    """Lightweight cached Kafka readiness probe (#140)."""
+    now = time.monotonic()
+    with _kafka_check_lock:
+        if now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S and _kafka_check_cache["result"] is not None:
+            return _kafka_check_cache["result"]
+    try:
+        get_producer_fn().list_topics(timeout=2)
+        result = "ok"
+    except Exception as exc:
+        app.logger.warning(f"Readiness kafka check failed: {exc}")
+        result = "unavailable"
+    with _kafka_check_lock:
+        _kafka_check_cache["result"] = result
+        _kafka_check_cache["at"] = now
+    return result
+
+
 def create_app():
     load_dotenv()
     app = Flask(__name__)
@@ -254,13 +277,9 @@ def create_app():
             app.logger.warning(f"Readiness redis check failed: {exc}")
             checks["redis"] = "unavailable"
 
-        try:
-            producer = get_producer()
-            producer.list_topics(timeout=2)
-            checks["kafka"] = "ok"
-        except Exception as exc:
-            app.logger.warning(f"Readiness kafka check failed: {exc}")
-            checks["kafka"] = "unavailable"
+        # Kafka metadata can block up to the timeout; cache the result
+        # briefly so a transient blip doesn't flap LB membership (#140).
+        checks["kafka"] = _cached_kafka_check(app, get_producer)
 
         ready = all(v == "ok" for v in checks.values())
         return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
