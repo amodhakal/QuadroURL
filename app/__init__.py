@@ -105,6 +105,7 @@ def create_app():
     _METRICS_EXCLUDED = frozenset(
         {
             "/health",
+            "/ready",
             "/metrics",
             "/logs",
             "/dashboard",
@@ -203,7 +204,9 @@ def create_app():
         checks = {}
 
         try:
-            db.execute_sql("SELECT 1")
+            from app.db_readiness import check_writable_primary
+
+            check_writable_primary(db)
             checks["postgres"] = "ok"
         except Exception as exc:
             app.logger.warning(f"Readiness postgres check failed: {exc}")

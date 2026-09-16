@@ -1,0 +1,120 @@
+# Group IDs include the suffix added by consumer/app.py, not just KAFKA_GROUP.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: request-log-consumer
+spec:
+  scaleTargetRef:
+    name: request-log-consumer
+  pollingInterval: 15
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  fallback:
+    failureThreshold: 3
+    replicas: 1
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.quadrourl.svc.cluster.local:9092
+        consumerGroup: request-log-writer-logs
+        topic: request-logs
+        lagThreshold: "1000"
+        offsetResetPolicy: earliest
+        allowIdleConsumers: "false"
+        scaleToZeroOnInvalidOffset: "false"
+        excludePersistentLag: "false"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: url-event-consumer
+spec:
+  scaleTargetRef:
+    name: url-event-consumer
+  pollingInterval: 15
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  fallback:
+    failureThreshold: 3
+    replicas: 1
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.quadrourl.svc.cluster.local:9092
+        consumerGroup: request-log-writer-events
+        topic: url-events
+        lagThreshold: "500"
+        offsetResetPolicy: earliest
+        allowIdleConsumers: "false"
+        scaleToZeroOnInvalidOffset: "false"
+        excludePersistentLag: "false"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: url-create-consumer
+spec:
+  scaleTargetRef:
+    name: url-create-consumer
+  pollingInterval: 15
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  fallback:
+    failureThreshold: 3
+    replicas: 1
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.quadrourl.svc.cluster.local:9092
+        consumerGroup: request-log-writer-creates
+        topic: url-creates
+        lagThreshold: "100"
+        offsetResetPolicy: earliest
+        allowIdleConsumers: "false"
+        scaleToZeroOnInvalidOffset: "false"
+        excludePersistentLag: "false"
