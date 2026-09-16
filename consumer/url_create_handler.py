@@ -5,41 +5,13 @@ import string
 import time
 from datetime import datetime, timezone
 
-from peewee import (
-    AutoField,
-    BooleanField,
-    CharField,
-    DateTimeField,
-    IntegerField,
-    IntegrityError,
-    Model,
-)
+from peewee import IntegrityError
+from models import Url
 
 
 logger = logging.getLogger("consumer.url_create")
 
 PENDING_TTL = 3600
-
-
-class Url(Model):
-    id = AutoField()
-    user_id = IntegerField()
-    short_code = CharField(unique=True)
-    original_url = CharField()
-    title = CharField()
-    is_active = BooleanField(default=True)
-    # Soft-expiry, mirrors app/models/url.py (#192). NULL = never expires;
-    # expired links resolve as missing (404) on the redirect path.
-    expires_at = DateTimeField(null=True, default=None)
-    # Idempotency key written by producers (#113). Mirrors app/models/url.py;
-    # nullable for rows created before the column existed.
-    request_id = CharField(null=True, unique=True)
-    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
-    updated_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
-
-    class Meta:
-        database = None
-        table_name = "url"
 
 
 def generate_short_code(length=6):

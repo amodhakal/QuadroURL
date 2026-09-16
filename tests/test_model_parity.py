@@ -1,16 +1,9 @@
 """Guard against app/consumer model drift (#144).
 
-The consumer deliberately does NOT share ``app.models``: its tables use raw
-integer columns where the app uses ``ForeignKeyField`` (consumer writes must
-never fail on FK ordering, and the consumer image cannot import the Flask
-app package). That divergence is intentional — but the shared surface
-(table names, column names, column types, nullability, ``CharField``
-lengths) must stay in lock-step, otherwise one side writes rows the other
-side cannot read (see #238 for the VARCHAR class of bug).
-
-These tests compare the live model definitions on both sides and fail on
-any drift. If you add a column to an app model, add it to the consumer
-twin in the same change.
+Both services use shared.schema.create_models with independent database
+bindings. These checks exercise the live imports to guard against accidentally
+reintroducing a duplicate model. Foreign-key ID accessors preserve the consumer
+payload contract without importing the Flask application.
 """
 
 import importlib.util
@@ -75,6 +68,12 @@ def _load_consumer_modules():
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = mod
+
+
+@pytest.fixture(autouse=True)
+def clean_tables():
+    """Schema inspection does not require the integration database fixture."""
+    yield
 
 
 @pytest.fixture(scope="module")
