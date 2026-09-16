@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import Annotated
-from urllib.parse import urlsplit
+from app.utils.url_safety import validate_destination
 
 from flask import abort, request
 from pydantic import (
@@ -48,14 +48,7 @@ class UrlCreate(Body):
     @field_validator("original_url")
     @classmethod
     def safe_url(cls, value):
-        try:
-            parsed = urlsplit(value)
-            valid = parsed.scheme in ("http", "https") and parsed.hostname
-        except ValueError:
-            valid = False
-        if not valid or any(c.isspace() for c in value):
-            raise ValueError("original_url must be a valid http(s) URL")
-        return value
+        return validate_destination(value)
 
     @field_validator("expires_at", mode="before")
     @classmethod

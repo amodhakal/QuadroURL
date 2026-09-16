@@ -13,7 +13,9 @@ def register_routes(app):
     from app.routes.analytics import analytics_bp
     from app.routes.delivery import delivery_bp
 
-    for blueprint in (users_bp, urls_bp, events_bp, auth_bp, exports_bp, analytics_bp, delivery_bp):
+    from app.routes.links import links_bp
+    from app.routes.qr import qr_bp
+    for blueprint in (users_bp, urls_bp, events_bp, auth_bp, exports_bp, analytics_bp, delivery_bp, links_bp, qr_bp):
         app.register_blueprint(blueprint)
         app.register_blueprint(blueprint, url_prefix="/api/v1", name=f"{blueprint.name}_v1")
 
