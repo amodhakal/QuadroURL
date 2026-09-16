@@ -259,6 +259,7 @@ def create_url():
 
 
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 def get_url_status(request_id):
     from app.cache import get_l2
 
@@ -335,6 +336,7 @@ def _require_int_query_param(name):
 
 
 @urls_bp.route("/urls", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def list_urls():
     offset = request.args.get("offset", 0, type=int)
@@ -417,6 +419,7 @@ def list_urls():
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def get_url_cached(url_id):
     cached = get_url(url_id)
@@ -438,6 +441,7 @@ def get_url_cached(url_id):
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def update_url(url_id):
     try:
@@ -509,6 +513,7 @@ def update_url(url_id):
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def delete_url_endpoint(url_id):
     from app.database import db

@@ -50,6 +50,7 @@ def _require_int_query_param(name):
 
 
 @events_bp.route("/events", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def list_events():
     offset = request.args.get("offset", 0, type=int)

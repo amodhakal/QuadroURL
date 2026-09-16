@@ -92,6 +92,7 @@ def bulk_import_users():
 
 
 @users_bp.route("/users", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def list_users():
     page = request.args.get("page", 1, type=int)
@@ -128,6 +129,7 @@ def list_users():
 
 
 @users_bp.route("/users/<int:user_id>", methods=["GET"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def get_user_cached(user_id):
     cached = get_user(user_id)
@@ -176,6 +178,7 @@ def create_user():
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def update_user(user_id):
     try:
@@ -206,6 +209,7 @@ def update_user(user_id):
 
 
 @users_bp.route("/users/<int:user_id>", methods=["DELETE"])
+@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def delete_user_endpoint(user_id):
     try:
