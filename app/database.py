@@ -31,7 +31,7 @@ def init_db(app):
 
     @app.before_request
     def _db_connect():
-        if request.path == "/health":
+        if request.path in ("/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics"):
             return
         db.connect(reuse_if_open=True)
 

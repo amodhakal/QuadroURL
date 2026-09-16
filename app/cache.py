@@ -58,6 +58,10 @@ _NEGATIVE_SENTINEL = "__NEGATIVE_CACHE__"
 _l2 = None
 _l2_pool = None
 _l2_unavailable = False
+_l2_unavailable_since = 0.0
+# Cooldown before retrying Redis after a failure (lets Redis recover
+# without an app restart). See #117.
+_L2_RETRY_COOLDOWN_S = 30.0
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cache-writer")
 
@@ -143,9 +147,13 @@ def _l1_clear(pattern):
 # ---------------------------------------------------------------------------
 
 def get_l2():
-    global _l2, _l2_unavailable
+    global _l2, _l2_unavailable, _l2_unavailable_since
     if _l2_unavailable:
-        return None
+        # Retry after cooldown so a Redis restart recovers automatically.
+        if time.time() - _l2_unavailable_since < _L2_RETRY_COOLDOWN_S:
+            return None
+        _l2_unavailable = False
+        _l2 = None
     if _l2 is None:
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         try:
@@ -160,8 +168,15 @@ def get_l2():
             _l2.ping()
         except (redis.ConnectionError, redis.TimeoutError, redis.RedisError):
             _l2_unavailable = True
+            _l2_unavailable_since = time.time()
             _l2 = None
     return _l2
+
+
+def _note_l2_failure():
+    global _l2_unavailable, _l2_unavailable_since
+    _l2_unavailable = True
+    _l2_unavailable_since = time.time()
 
 
 def _l2_safe(fn):
@@ -252,11 +267,26 @@ def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
             _clear_inflight_event(key)
     else:
         # Concurrent caller — wait for the primary to finish, then read from cache.
-        event.wait(timeout=30)
+        # If the primary errored or the entry was evicted, fall back to a
+        # direct fetch instead of reporting a false 404 (#116).
+        waited = event.wait(timeout=30)
         cached, _ = _l1_get(key)
-        if cached is _NEGATIVE_SENTINEL:
+        if cached is not None:
+            if cached is _NEGATIVE_SENTINEL:
+                return None
+            return cached
+        if not waited:
+            # Primary timed out; do a direct fetch rather than misreporting.
+            try:
+                return fetch_fn()
+            except Exception:
+                return None
+        # Primary finished but cache is empty (error path) — try once directly.
+        try:
+            value = fetch_fn()
+        except Exception:
             return None
-        return cached
+        return value
 
 
 def _background_refresh(key, fetch_fn, ttl, negative_ttl=None):
@@ -351,9 +381,25 @@ def delete_user(user_id):
     _l2_fire_and_forget(lambda client: client.delete(key))
 
 
+def _scan_delete(client, pattern):
+    """Delete keys matching *pattern* via SCAN (non-blocking, #119)."""
+    cursor = 0
+    batch = []
+    while True:
+        cursor, keys = client.scan(cursor=cursor, match=pattern, count=500)
+        batch.extend(keys)
+        if len(batch) >= 500:
+            client.delete(*batch)
+            batch = []
+        if cursor == 0:
+            break
+    if batch:
+        client.delete(*batch)
+
+
 def clear_all_users():
     _l1_clear("user:")
-    _l2_fire_and_forget(lambda client: client.delete(*client.keys("user:*")))
+    _l2_fire_and_forget(lambda client: _scan_delete(client, "user:*"))
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +461,7 @@ def delete_url(url_id):
 
 def clear_all_urls():
     _l1_clear("url:")
-    _l2_fire_and_forget(lambda client: client.delete(*client.keys("url:*")))
+    _l2_fire_and_forget(lambda client: _scan_delete(client, "url:*"))
 
 
 # ---------------------------------------------------------------------------

@@ -100,6 +100,17 @@ def create_consumer(group_id):
     })
 
 
+def commit_one(consumer, msg):
+    """Commit a single message offset (used to skip poison messages)."""
+    try:
+        consumer.commit(
+            offsets=[TopicPartition(msg.topic(), msg.partition(), msg.offset() + 1)],
+            asynchronous=False,
+        )
+    except Exception:
+        logger.exception("Failed to commit poison-message offset")
+
+
 def commit_buffer(consumer, buffered):
     """Commit offsets AFTER the last successfully-buffered message per partition.
 
@@ -167,9 +178,11 @@ def drain_url_events(buffer):
 def emit_created_events(producer, events):
     for event in events:
         try:
+            key = event.get("url_id")
             producer.produce(
                 config.KAFKA_TOPIC_URL_EVENTS,
                 value=json.dumps(event).encode("utf-8"),
+                key=str(key).encode("utf-8") if key is not None else None,
             )
         except Exception:
             logger.exception("[url-creates] Failed to publish created event")
@@ -199,6 +212,13 @@ def run_request_log_consumer():
         return True
 
     while running:
+        if stalled:
+            # Don't poll while the buffer can't drain — polling now
+            # would discard the message (#115). Back off and retry.
+            time.sleep(1.0)
+            drain()
+            last_drain = time.time()
+            continue
         msg = consumer.poll(timeout=1.0)
 
         if msg is None:
@@ -212,9 +232,6 @@ def run_request_log_consumer():
             if msg.error().code() == KafkaError._PARTITION_EOF:
                 continue
             logger.error(f"[request-logs] Kafka error: {msg.error()}")
-            continue
-
-        if stalled:
             continue
 
         try:
@@ -231,7 +248,8 @@ def run_request_log_consumer():
             }
             buffer.append((payload, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[request-logs] Failed to decode message: {e}")
+            logger.warning(f"[request-logs] Skipping poison message: {e}")
+            commit_one(consumer, msg)
             continue
 
         now = time.time()
@@ -271,6 +289,13 @@ def run_url_event_consumer():
         return True
 
     while running:
+        if stalled:
+            # Don't poll while the buffer can't drain — polling now
+            # would discard the message (#115). Back off and retry.
+            time.sleep(1.0)
+            drain()
+            last_drain = time.time()
+            continue
         msg = consumer.poll(timeout=1.0)
 
         if msg is None:
@@ -284,9 +309,6 @@ def run_url_event_consumer():
             if msg.error().code() == KafkaError._PARTITION_EOF:
                 continue
             logger.error(f"[url-events] Kafka error: {msg.error()}")
-            continue
-
-        if stalled:
             continue
 
         try:
@@ -303,7 +325,8 @@ def run_url_event_consumer():
             }
             buffer.append((payload, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[url-events] Failed to decode message: {e}")
+            logger.warning(f"[url-events] Skipping poison message: {e}")
+            commit_one(consumer, msg)
             continue
 
         now = time.time()
@@ -348,6 +371,13 @@ def run_url_create_consumer():
         return True
 
     while running:
+        if stalled:
+            # Don't poll while the buffer can't drain — polling now
+            # would discard the message (#115). Back off and retry.
+            time.sleep(1.0)
+            drain()
+            last_drain = time.time()
+            continue
         msg = consumer.poll(timeout=1.0)
 
         if msg is None:
@@ -363,14 +393,12 @@ def run_url_create_consumer():
             logger.error(f"[url-creates] Kafka error: {msg.error()}")
             continue
 
-        if stalled:
-            continue
-
         try:
             data = json.loads(msg.value().decode("utf-8"))
             buffer.append((data, msg))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[url-creates] Failed to decode message: {e}")
+            logger.warning(f"[url-creates] Skipping poison message: {e}")
+            commit_one(consumer, msg)
             continue
 
         now = time.time()

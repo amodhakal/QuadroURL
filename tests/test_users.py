@@ -167,7 +167,7 @@ def test_bulk_import_wrong_file_type(client):
 
 
 def test_bulk_import_replaces_existing_users(client, sample_user, users_csv):
-    """Bulk import should replace all existing users."""
+    """Bulk import is additive (non-destructive): existing users are kept."""
     file_data, filename = users_csv
     response = client.post(
         "/users/bulk",
@@ -179,7 +179,7 @@ def test_bulk_import_replaces_existing_users(client, sample_user, users_csv):
     list_response = client.get("/users")
     data = list_response.get_json()
     usernames = {u["username"] for u in data["sample"]}
-    assert "testuser" not in usernames
+    assert "testuser" in usernames
     assert "alice" in usernames
 
 

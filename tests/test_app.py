@@ -154,9 +154,9 @@ def test_422_error_handler(app):
 
 
 def test_500_error_handler(app):
-    # Covers lines 172-174: registered 500 handler returns JSON with the
-    # exception message. The handler inspects sys.exc_info(), so it is invoked
-    # while a RuntimeError is being handled.
+    # Unhandled exceptions return a generic message (no internal details
+    # leak, see #104). The handler is invoked while a RuntimeError is
+    # being handled.
     import sys
     from werkzeug.exceptions import InternalServerError
 
@@ -167,7 +167,21 @@ def test_500_error_handler(app):
         except RuntimeError:
             response, code = handler(sys.exc_info()[1])
     assert code == 500
-    assert response.json["error"] == "boom"
+    assert response.json["error"] == "Internal server error"
+
+
+def test_500_error_handler_passes_through_intentional_abort_message(app):
+    # abort(500, description=...) carries a deliberate, static message —
+    # surfacing it is safe and preserves cases like short-code exhaustion.
+    from werkzeug.exceptions import InternalServerError
+
+    handler = app.error_handler_spec[None][500][InternalServerError]
+    with app.test_request_context("/x"):
+        response, code = handler(
+            InternalServerError(description="Failed to generate unique short code")
+        )
+    assert code == 500
+    assert response.json["error"] == "Failed to generate unique short code"
 
 
 def test_list_handler_emit_error_path_calls_handle_error(app):

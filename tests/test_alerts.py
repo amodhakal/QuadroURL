@@ -59,6 +59,7 @@ def test_start_alerting_spawns_daemon_thread(monkeypatch):
         target=alerts._monitor,
         args=("http://myapp", 1),
         daemon=True,
+        name="alert-monitor",
     )
     assert fake_thread.start.called
 
@@ -78,12 +79,12 @@ def test_monitor_down_then_recovered_series(monkeypatch):
 
     def fake_sleep(interval):
         calls["n"] += 1
-        if calls["n"] >= 4:
+        if calls["n"] >= 6:
             raise RuntimeError("stop")
 
     monkeypatch.setattr(alerts.time, "sleep", fake_sleep)
 
-    seq_results = [_resp(500), Exception("boom"), _resp(200)]
+    seq_results = [_resp(500), Exception("boom"), _resp(500), _resp(200), _resp(200)]
     seq_index = {"i": 0}
 
     def fake_get_sequence(url, timeout):

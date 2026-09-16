@@ -36,11 +36,12 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         try:
+            from app.utils.request_ctx import get_client_ip, get_request_id
+
             log_data["method"] = request.method
             log_data["path"] = request.path
-            log_data["remote_addr"] = request.headers.get(
-                "X-Forwarded-For", request.remote_addr
-            )
+            log_data["remote_addr"] = get_client_ip()
+            log_data["request_id"] = get_request_id()
         except RuntimeError:
             pass
         if record.exc_info:
@@ -67,11 +68,12 @@ class ListHandler(logging.Handler):
                 "message": record.getMessage(),
             }
             try:
+                from app.utils.request_ctx import get_client_ip, get_request_id
+
                 log_data["method"] = request.method
                 log_data["path"] = request.path
-                log_data["remote_addr"] = request.headers.get(
-                    "X-Forwarded-For", request.remote_addr
-                )
+                log_data["remote_addr"] = get_client_ip()
+                log_data["request_id"] = get_request_id()
             except RuntimeError:
                 pass
             if record.exc_info:
@@ -79,8 +81,6 @@ class ListHandler(logging.Handler):
                     record.exc_info
                 )
             log_records.append(log_data)
-            if len(log_records) > 200:
-                del log_records[:-200]
         except Exception:
             self.handleError(record)
 
@@ -126,8 +126,13 @@ def _sample_system_metrics():
 def start_system_metrics_sampler(interval=5):
     """Update CPU/memory gauges from a background thread.
 
-    Keeps psutil syscalls out of the request hot path.
+    Keeps psutil syscalls out of the request hot path. Guarded against
+    duplicate starts when create_app() is called repeatedly (tests,
+    reloader) — see #129.
     """
+    for t in threading.enumerate():
+        if t.name == "system-metrics-sampler" and t.is_alive():
+            return t
 
     def _run():
         while True:
@@ -144,6 +149,29 @@ def start_system_metrics_sampler(interval=5):
     return t
 
 
+_kafka_check_cache = {"result": None, "at": 0.0}
+_kafka_check_lock = threading.Lock()
+KAFKA_CHECK_TTL_S = 10.0
+
+
+def _cached_kafka_check(app, get_producer_fn):
+    """Lightweight cached Kafka readiness probe (#140)."""
+    now = time.monotonic()
+    with _kafka_check_lock:
+        if now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S and _kafka_check_cache["result"] is not None:
+            return _kafka_check_cache["result"]
+    try:
+        get_producer_fn().list_topics(timeout=2)
+        result = "ok"
+    except Exception as exc:
+        app.logger.warning(f"Readiness kafka check failed: {exc}")
+        result = "unavailable"
+    with _kafka_check_lock:
+        _kafka_check_cache["result"] = result
+        _kafka_check_cache["at"] = now
+    return result
+
+
 def create_app():
     load_dotenv()
     app = Flask(__name__)
@@ -154,23 +182,44 @@ def create_app():
 
     register_routes(app)
 
+    # Observability endpoints poll themselves every few seconds; counting
+    # them would inflate RPS/latency baselines (#135).
+    _METRICS_EXCLUDED = frozenset({
+        "/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics",
+    })
+
     @app.before_request
     def log_request():
-        if request.path == "/health":
+        if request.path in _METRICS_EXCLUDED:
             return
-        request._start_time = time.time()
+        from app.utils.request_ctx import get_request_id
+
+        request._start_time = time.perf_counter()
+        get_request_id()
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
 
     @app.after_request
     def track_metrics(response):
-        if request.path == "/health":
+        if request.path in _METRICS_EXCLUDED:
             return response
-        latency_s = time.time() - getattr(request, "_start_time", time.time())
-        latency_ms = latency_s * 1000
-        record_request_end(request.method, request.path, response.status_code, latency_ms)
+        from app.utils.request_ctx import get_client_ip, get_request_id
 
-        endpoint = request.path
+        try:
+            response.headers["X-Request-ID"] = get_request_id()
+        except Exception:
+            pass
+        start = getattr(request, "_start_time", None)
+        latency_s = time.perf_counter() - start if start is not None else 0.0
+        latency_ms = latency_s * 1000
+        # Bound cardinality: use the matched route template, not the raw
+        # path with IDs/codes (#123, #154).
+        try:
+            endpoint = request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
+        except Exception:
+            endpoint = request.endpoint or request.path
+        record_request_end(request.method, endpoint, response.status_code, latency_ms)
+
         REQUEST_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
         REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
         REQUESTS_IN_PROGRESS.dec()
@@ -185,7 +234,7 @@ def create_app():
         if sc_match:
             short_code = sc_match.group(1)
 
-        client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        client_ip = get_client_ip()
         user_agent = request.headers.get("User-Agent", "")
 
         try:
@@ -197,6 +246,7 @@ def create_app():
                 "status_code": response.status_code,
                 "latency_ms": round(latency_ms, 2),
                 "short_code": short_code,
+                "request_id": get_request_id(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
         except Exception:
@@ -220,7 +270,8 @@ def create_app():
             db.execute_sql("SELECT 1")
             checks["postgres"] = "ok"
         except Exception as exc:
-            checks["postgres"] = str(exc)
+            app.logger.warning(f"Readiness postgres check failed: {exc}")
+            checks["postgres"] = "unavailable"
 
         try:
             redis_client = get_l2()
@@ -229,14 +280,12 @@ def create_app():
             else:
                 checks["redis"] = "unavailable"
         except Exception as exc:
-            checks["redis"] = str(exc)
+            app.logger.warning(f"Readiness redis check failed: {exc}")
+            checks["redis"] = "unavailable"
 
-        try:
-            producer = get_producer()
-            producer.list_topics(timeout=2)
-            checks["kafka"] = "ok"
-        except Exception as exc:
-            checks["kafka"] = str(exc)
+        # Kafka metadata can block up to the timeout; cache the result
+        # briefly so a transient blip doesn't flap LB membership (#140).
+        checks["kafka"] = _cached_kafka_check(app, get_producer)
 
         ready = all(v == "ok" for v in checks.values())
         return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
@@ -258,22 +307,40 @@ def create_app():
     @app.errorhandler(500)
     def internal_server_error(error):
         app.logger.exception("Internal server error")
-        _, exc, _ = sys.exc_info()
-        return jsonify({"error": str(exc)}), 500
+        # Intentional abort(500, description=...) messages are static and
+        # safe to surface (e.g. short-code exhaustion). Anything else —
+        # including wrapped unhandled exceptions — gets a generic message
+        # so internals never leak (#104).
+        from werkzeug.exceptions import HTTPException, InternalServerError
+
+        if (
+            isinstance(error, HTTPException)
+            and error.description
+            and error.description != InternalServerError.description
+        ):
+            return jsonify({"error": error.description}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(503)
     def service_unavailable(error):
         return jsonify({"error": str(error.description)}), 503
 
-    # Start Discord alert monitor in background
+    # Background workers are opt-in and started once (#128, #129):
+    # - the Discord monitor cannot detect a real crash from inside the
+    #   same process, so it only runs when ALERT_MONITOR_ENABLED=true;
+    # - the sampler is guarded internally against duplicate threads;
+    # - atexit flush is registered once per process.
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer, publish_log_event
-    app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
-    start_alerting(app_url=app_url, interval=60)
+    if os.environ.get("ALERT_MONITOR_ENABLED", "false").lower() == "true":
+        app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
+        start_alerting(app_url=app_url, interval=60)
 
     start_system_metrics_sampler()
 
     import atexit
-    atexit.register(flush_producer)
+    if not getattr(create_app, "_atexit_registered", False):
+        atexit.register(flush_producer)
+        create_app._atexit_registered = True
 
     return app

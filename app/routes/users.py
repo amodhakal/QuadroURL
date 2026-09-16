@@ -16,6 +16,7 @@ from app.cache import (
 )
 from app.database import db
 from app.models.user import User
+from app.utils.ratelimit import rate_limit
 
 users_bp = Blueprint("users", __name__)
 
@@ -23,6 +24,7 @@ DATA_DIR = os.path.join("./data")
 
 
 @users_bp.route("/users/bulk", methods=["POST"])
+@rate_limit(capacity=10, refill_rate=1.0)
 def bulk_import_users():
     if not request.content_type or not request.content_type.startswith(
         "multipart/form-data"
@@ -41,31 +43,59 @@ def bulk_import_users():
         current_app.logger.warning("Invalid file type for bulk import")
         abort(400, description="Invalid file type, expected .csv")
 
-    reader = csv.DictReader(file.stream.read().decode("utf-8").splitlines())
-    rows = [{k: v for k, v in row.items() if k != "id"} for row in reader]
+    try:
+        raw = file.stream.read()
+        if len(raw) > 5 * 1024 * 1024:
+            abort(400, description="CSV too large (max 5MB)")
+        text = raw.decode("utf-8")
+    except Exception:
+        abort(400, description="Could not read CSV file")
 
-    db.drop_tables([User], cascade=True)
-    db.create_tables([User])
+    reader = csv.DictReader(text.splitlines())
+    if not reader.fieldnames or "username" not in reader.fieldnames or "email" not in reader.fieldnames:
+        abort(400, description="CSV must include username and email columns")
 
+    rows = []
+    for i, row in enumerate(reader, start=1):
+        if len(rows) >= 5000:
+            abort(400, description="CSV too many rows (max 5000)")
+        username = (row.get("username") or "").strip()
+        email = (row.get("email") or "").strip()
+        if not username or not email:
+            abort(400, description=f"Row {i}: username and email are required")
+        # Tolerate unexpected columns by whitelisting (#130).
+        rows.append({"username": username, "email": email})
+
+    if not rows:
+        return jsonify({"imported": 0}), 200
+
+    # Non-destructive: insert new rows, skip existing usernames/emails (#107).
+    # Never drop tables here — the old code deleted urls/events via cascade.
+    imported = 0
     with db.atomic():
         for batch in chunked(rows, 100):
-            User.insert_many(batch).execute()
+            User.insert_many(batch).on_conflict_ignore().execute()
+            imported += len(batch)
 
     clear_all_users()
     clear_list_cache("list:users:")
 
-    return jsonify({"imported": len(rows)}), 200
+    return jsonify({"imported": imported}), 200
 
 
 @users_bp.route("/users", methods=["GET"])
 def list_users():
-    cache_key = f"list:users:{request.query_string.decode()}"
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+    if page is None or page < 1:
+        abort(400, description="page must be >= 1")
+    if per_page is None or per_page < 1 or per_page > 100:
+        abort(400, description="per_page must be between 1 and 100")
+
+    cache_key = f"list:users:page={page}&per_page={per_page}"
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
-
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 20, type=int)
 
     offset = (page - 1) * per_page
     users = (
@@ -106,6 +136,7 @@ def get_user_cached(user_id):
 
 
 @users_bp.route("/users", methods=["POST"])
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_user():
     data = request.get_json(silent=True)
     if not data:
@@ -120,11 +151,19 @@ def create_user():
     if not email or not isinstance(email, str) or not email.strip():
         abort(400, description="email must be a non-empty string")
 
+    # Prevent mass assignment: only allow whitelisted fields (#103).
+    allowed = {"username", "email"}
+    unknown = set(data) - allowed
+    if unknown:
+        abort(400, description=f"Unknown fields: {sorted(unknown)}")
+
     try:
-        user = User.create(**data)
+        user = User.create(
+            username=username.strip(), email=email.strip()
+        )
     except Exception as e:
         current_app.logger.exception(f"Failed to create user: {e}")
-        abort(400, description=str(e))
+        abort(400, description="Could not create user (duplicate?)")
 
     result = model_to_dict(user)
     set_user(user.id, result)
@@ -144,12 +183,25 @@ def update_user(user_id):
         current_app.logger.warning("Invalid JSON received for update_user")
         abort(400, description="Invalid JSON")
 
-    if "username" in data:
-        user.username = data["username"]
-    if "email" in data:
-        user.email = data["email"]
+    allowed = {"username", "email"}
+    unknown = set(data) - allowed
+    if unknown:
+        abort(400, description=f"Unknown fields: {sorted(unknown)}")
 
-    user.save()
+    if "username" in data:
+        if not isinstance(data["username"], str) or not data["username"].strip():
+            abort(400, description="username must be a non-empty string")
+        user.username = data["username"].strip()
+    if "email" in data:
+        if not isinstance(data["email"], str) or not data["email"].strip():
+            abort(400, description="email must be a non-empty string")
+        user.email = data["email"].strip()
+
+    try:
+        user.save()
+    except Exception:
+        current_app.logger.exception(f"Failed to update user id={user_id}")
+        abort(400, description="Could not update user (duplicate?)")
     data = model_to_dict(user)
     set_user(user_id, data)
     clear_list_cache("list:users:")
