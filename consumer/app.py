@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -120,6 +121,21 @@ def handle_signal(signum, frame):
 
 signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
+
+
+def _heartbeat_path():
+    """Path of the liveness heartbeat file for this consumer type (#174)."""
+    ctype = getattr(config, "CONSUMER_TYPE", "unknown") or "unknown"
+    return os.environ.get("CONSUMER_HEARTBEAT_FILE", f"/tmp/consumer-{ctype}.heartbeat")
+
+
+def _beat():
+    """Refresh the heartbeat file; never raise (a heartbeat must not crash a consumer)."""
+    try:
+        with open(_heartbeat_path(), "w") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
 
 
 def create_consumer(group_id):
@@ -247,6 +263,7 @@ def run_request_log_consumer():
         return True
 
     while running:
+        _beat()
         if stalled:
             # Don't poll while the buffer can't drain — polling now
             # would discard the message (#115). Back off and retry.
@@ -324,6 +341,7 @@ def run_url_event_consumer():
         return True
 
     while running:
+        _beat()
         if stalled:
             # Don't poll while the buffer can't drain — polling now
             # would discard the message (#115). Back off and retry.
@@ -406,6 +424,7 @@ def run_url_create_consumer():
         return True
 
     while running:
+        _beat()
         if stalled:
             # Don't poll while the buffer can't drain — polling now
             # would discard the message (#115). Back off and retry.
