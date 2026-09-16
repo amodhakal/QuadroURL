@@ -97,6 +97,21 @@ def format_url(url):
     return data
 
 
+def _idempotency_key(data):
+    """Client-supplied idempotency key for POST /urls (#113).
+
+    The ``Idempotency-Key`` header wins over the ``request_id`` JSON field;
+    empty values are ignored (treated as absent).
+    """
+    header_key = request.headers.get("Idempotency-Key")
+    if isinstance(header_key, str) and header_key.strip():
+        return header_key.strip()
+    body_key = data.get("request_id") if isinstance(data, dict) else None
+    if isinstance(body_key, str) and body_key.strip():
+        return body_key.strip()
+    return None
+
+
 @urls_bp.route("/urls", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
 def create_url():
@@ -121,6 +136,23 @@ def create_url():
         abort(400, description="User not found")
 
     request_id = str(uuid.uuid4())
+
+    idempotency_key = _idempotency_key(data)
+    if idempotency_key is not None:
+        existing = Url.get_or_none(Url.request_id == idempotency_key)
+        if existing is not None:
+            # Client retry of an already-created URL: return the original
+            # row without publishing again (#113).
+            replay = format_url(existing)
+            set_url(existing.id, replay)
+            set_url_by_short_code(existing.short_code, replay)
+            clear_list_cache("list:urls:")
+            clear_list_cache("list:events:")
+            current_app.logger.info(
+                f"Idempotent replay: request_id={idempotency_key} url_id={existing.id}"
+            )
+            return jsonify(replay), 200
+        request_id = idempotency_key
 
     try:
         created = publish_url_create(

@@ -151,6 +151,8 @@ def _create_url_sync(data):
     import secrets
     import string
 
+    from peewee import IntegrityError
+
     from app.cache import set_url, set_url_by_short_code
     from app.database import db
     from app.models.url import Url
@@ -159,9 +161,11 @@ def _create_url_sync(data):
     user_id = data.get("user_id")
     original_url = data.get("original_url")
     title = data.get("title")
+    request_id = data.get("request_id")
 
     db.connect(reuse_if_open=True)
     url = None
+    deduplicated = False
     for _ in range(5):
         short_code = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(6))
         try:
@@ -171,8 +175,22 @@ def _create_url_sync(data):
                 original_url=original_url,
                 title=title,
                 is_active=True,
+                request_id=request_id,
             )
             break
+        except IntegrityError:
+            # A request_id clash means this idempotency key already stored a
+            # row (client retry raced past the route-level check): return the
+            # existing row instead of failing (#113). Anything else is a
+            # short-code clash, so fall through to the next attempt.
+            if request_id:
+                try:
+                    url = Url.get(Url.request_id == request_id)
+                    deduplicated = True
+                    break
+                except Url.DoesNotExist:
+                    pass
+            continue
         except Exception:
             continue
     if url is None:
@@ -181,7 +199,12 @@ def _create_url_sync(data):
     result = model_to_dict(url, recurse=False)
     result["user_id"] = result.pop("user")
     set_url(url.id, result)
-    set_url_by_short_code(short_code, result)
+    set_url_by_short_code(url.short_code, result)
+
+    if deduplicated:
+        # The winning attempt already emitted the "created" event; only the
+        # cache calls are mirrored so a second event is never recorded (#113).
+        return result
 
     publish_event(
         {

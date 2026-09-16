@@ -248,6 +248,7 @@ def test_handle_url_create_batch_success(consumer_modules, monkeypatch):
         "original_url",
         "title",
         "is_active",
+        "request_id",
     }
     pipe.setex.assert_called_once()
     key, ttl, raw = pipe.setex.call_args.args

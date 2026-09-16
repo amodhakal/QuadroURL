@@ -19,6 +19,10 @@ class Url(BaseModel):
     original_url = CharField()
     title = CharField()
     is_active = BooleanField()
+    # Client idempotency key for POST /urls (#113). Nullable so pre-existing
+    # rows stay valid; unique so each key maps to exactly one row. Postgres
+    # treats NULLs as distinct, so old rows never clash.
+    request_id = CharField(null=True, unique=True)
     created_at = DateTimeField(default=datetime.now)
     updated_at = DateTimeField(default=datetime.now)
 

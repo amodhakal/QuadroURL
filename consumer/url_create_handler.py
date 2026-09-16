@@ -11,6 +11,7 @@ from peewee import (
     CharField,
     DateTimeField,
     IntegerField,
+    IntegrityError,
     Model,
 )
 
@@ -27,6 +28,9 @@ class Url(Model):
     original_url = CharField()
     title = CharField()
     is_active = BooleanField(default=True)
+    # Idempotency key written by producers (#113). Mirrors app/models/url.py;
+    # nullable for rows created before the column existed.
+    request_id = CharField(null=True, unique=True)
     created_at = DateTimeField()
     updated_at = DateTimeField()
 
@@ -80,17 +84,38 @@ def handle_url_create_batch(messages, db, redis_client):
                     continue
 
                 url = None
+                deduplicated = False
                 for attempt in range(5):
                     short_code = generate_short_code()
                     try:
-                        url = Url.create(
-                            user_id=user_id,
-                            short_code=short_code,
-                            original_url=original_url,
-                            title=title,
-                            is_active=True,
-                        )
+                        # One savepoint per attempt: a failed INSERT must not
+                        # poison the batch transaction (Postgres aborts it),
+                        # and the request_id lookup below needs a usable
+                        # transaction (#113).
+                        with db.savepoint():
+                            url = Url.create(
+                                user_id=user_id,
+                                short_code=short_code,
+                                original_url=original_url,
+                                title=title,
+                                is_active=True,
+                                request_id=request_id,
+                            )
                         break
+                    except IntegrityError:
+                        # Request-id clash = redelivered retry of an
+                        # already-stored row: reuse it so the retrying client
+                        # gets its ready-status (#113). Anything else is a
+                        # short-code clash, so try the next code.
+                        try:
+                            with db.savepoint():
+                                url = Url.select().where(Url.request_id == request_id).get()
+                            deduplicated = True
+                            break
+                        except Url.DoesNotExist:
+                            continue
+                        except Exception:
+                            continue
                     except Exception:
                         continue
 
@@ -119,6 +144,11 @@ def handle_url_create_batch(messages, db, redis_client):
                         },
                     )
                 )
+                if deduplicated:
+                    # The first attempt already queued the "created" event;
+                    # only the ready-status is (re)written so the retrying
+                    # client unblocks without a duplicate row or event (#113).
+                    continue
                 created_events.append(
                     {
                         "url_id": url.id,
