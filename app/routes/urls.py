@@ -29,7 +29,9 @@ from app.cache import (
 from app.models.url import Url
 from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
-from app.utils.auth import require_auth
+from app.utils.auth import require_auth, require_owner, scope_query, cache_scope, is_admin
+from flask import g
+from hashlib import sha256
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
     parse_expires_at,
@@ -173,7 +175,8 @@ def _idempotency_key(data):
 def create_url():
     data = require_json("Invalid JSON received for create_url")
 
-    user_id = data.get("user_id")
+    user_id = data.get("user_id", g.current_user_id)
+    require_owner(user_id)
     original_url = data.get("original_url")
     title = data.get("title")
 
@@ -205,11 +208,14 @@ def create_url():
         current_app.logger.warning("User not found")
         abort(400, description="User not found")
 
-    request_id = str(uuid.uuid4())
+    request_id = f"u{user_id}:{uuid.uuid4()}"
 
     idempotency_key = _idempotency_key(data)
     if idempotency_key is not None:
-        existing = Url.get_or_none(Url.request_id == idempotency_key)
+        # Namespace before both persistence and Kafka/status cache publication.
+        # A fixed-length digest avoids DB key overflow and cross-user collisions.
+        idempotency_key = f"u{user_id}:" + sha256(idempotency_key.encode()).hexdigest()
+        existing = Url.get_or_none((Url.request_id == idempotency_key) & (Url.user == user_id))
         if existing is not None:
             # Client retry of an already-created URL: return the original
             # row without publishing again (#113).
@@ -260,8 +266,16 @@ def create_url():
 
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
+@require_auth
 def get_url_status(request_id):
     from app.cache import get_l2
+
+    # Older IDs have no owner marker: only a persisted owned row can authorize
+    # them. Do not trust unowned Redis payloads, including pending/error states.
+    if not request_id.startswith(f"u{g.current_user_id}:") and not is_admin():
+        existing = Url.get_or_none((Url.request_id == request_id) & (Url.user == g.current_user_id))
+        if existing is None:
+            abort(404)
 
     try:
         r = get_l2()
@@ -349,7 +363,7 @@ def list_urls():
     for name in ("id", "user_id", "short_code", "original_url", "is_active", "before_id"):
         if name in request.args:
             key_parts.append(f"{name}={request.args[name][:128]}")
-    cache_key = "list:urls:" + "&".join(key_parts)
+    cache_key = "list:urls:" + cache_scope() + "&".join(key_parts)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
@@ -366,6 +380,7 @@ def list_urls():
         Url.updated_at,
     )
 
+    query = scope_query(query, Url.user)
     if "id" in request.args:
         query = query.where(Url.id == _require_int_query_param("id"))
 
@@ -422,11 +437,16 @@ def list_urls():
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def get_url_cached(url_id):
+    owner = Url.get_or_none(Url.id == url_id)
+    if owner is None:
+        abort(404)
+    require_owner(owner.user_id)
     cached = get_url(url_id)
     if cached is not None:
         return jsonify(cached)
     try:
         url = Url.get_by_id(url_id)
+        require_owner(url.user_id)
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for id={url_id}")
         abort(404)
@@ -446,6 +466,7 @@ def get_url_cached(url_id):
 def update_url(url_id):
     try:
         url = Url.get_by_id(url_id)
+        require_owner(url.user_id)
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for update id={url_id}")
         abort(404)
@@ -520,6 +541,7 @@ def delete_url_endpoint(url_id):
 
     try:
         url = Url.get_by_id(url_id)
+        require_owner(url.user_id)
         short_code = url.short_code
         with db.atomic():
             url.delete_instance(recursive=True)

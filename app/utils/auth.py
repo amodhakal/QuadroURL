@@ -1,36 +1,23 @@
-"""Bearer-key authentication, phase 1 (#99).
+"""Bearer authentication and ownership policy.
 
-Every non-public endpoint requires ``Authorization: Bearer <key>`` via
-:func:`require_auth`, which loads the key's owner into ``flask.g``.
-Public by necessity: ``/health``, ``/ready``, observability endpoints,
-the redirect/expand product surface, the async status poll (unguessable
-request id), the chaos switch (own token gate), and user registration
-itself (bootstrap — registration issues the first key).
-
-Deliberately NOT here yet: object-level ownership (any valid key can
-mutate any row — no worse than today, where no key is needed at all).
-That matrix belongs to the ownership model (#175); this module is the
-enforcement point it will hook into (``g.current_user_id`` is already
-the authenticated identity).
+Admin membership is operator-managed through ADMIN_USER_IDS (comma-separated
+numeric IDs), never through registration/update input or client headers.
 """
 
 import functools
 import hashlib
+import os
 import secrets
 
 from flask import abort, current_app, g, request
 
 
 def hash_key(raw):
-    """sha256 hex digest — the only form ever persisted."""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def issue_api_key(user_id, name=""):
-    """Create a key row and return ``(record, raw_key)``.
-
-    The raw key is returned once for display; only its digest is stored.
-    """
+    """Store only the digest; return the raw credential once."""
     from app.models.api_key import ApiKey
 
     raw = secrets.token_urlsafe(32)
@@ -38,24 +25,52 @@ def issue_api_key(user_id, name=""):
     return record, raw
 
 
-def require_auth(fn):
-    """Abort 401 unless a valid bearer key identifies the caller."""
+def is_admin():
+    configured = current_app.config.get("ADMIN_USER_IDS", os.getenv("ADMIN_USER_IDS", ""))
+    ids = configured.split(",") if isinstance(configured, str) else configured
+    return str(getattr(g, "current_user_id", "")) in {str(i).strip() for i in ids}
 
+
+def require_owner(user_id):
+    """Hide foreign resources; check before reading even a shared object cache."""
+    if user_id != g.current_user_id and not is_admin():
+        abort(404)
+
+
+def scope_query(query, owner_field):
+    return query if is_admin() else query.where(owner_field == g.current_user_id)
+
+
+def cache_scope():
+    return f"actor={g.current_user_id}:admin={int(is_admin())}:"
+
+
+def require_auth(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         header = request.headers.get("Authorization", "")
         scheme, _, raw = header.partition(" ")
         if scheme.lower() != "bearer" or not raw.strip():
-            current_app.logger.warning("Missing or malformed Authorization header")
             abort(401, description="Missing or invalid API key")
         from app.models.api_key import ApiKey
+        from app.models.user import User
 
         record = ApiKey.get_or_none(ApiKey.key_hash == hash_key(raw.strip()))
-        if record is None:
-            current_app.logger.warning("Unknown API key presented")
+        if record is None or not User.select().where(User.id == record.user_id).exists():
             abort(401, description="Missing or invalid API key")
         g.api_key_id = record.id
         g.current_user_id = record.user_id
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def require_admin(fn):
+    @require_auth
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not is_admin():
+            abort(403, description="Administrator access required")
         return fn(*args, **kwargs)
 
     return wrapper

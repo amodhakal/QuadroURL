@@ -18,7 +18,7 @@ from app.cache import (
 from app.database import db
 from app.models.url import Url
 from app.models.user import User
-from app.utils.auth import require_auth
+from app.utils.auth import require_auth, require_admin, require_owner, scope_query, cache_scope
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
     reject_unknown_fields,
@@ -32,7 +32,7 @@ users_bp = Blueprint("users", __name__)
 
 @users_bp.route("/users/bulk", methods=["POST"])
 @rate_limit(capacity=10, refill_rate=1.0)
-@require_auth
+@require_admin
 def bulk_import_users():
     if not request.content_type or not request.content_type.startswith("multipart/form-data"):
         current_app.logger.warning(f"Invalid Content-Type for bulk import: {request.content_type}")
@@ -99,14 +99,14 @@ def list_users():
     per_page = request.args.get("per_page", 20, type=int)
     page, per_page = validate_page_params(page, per_page)
 
-    cache_key = f"list:users:page={page}&per_page={per_page}"
+    cache_key = f"list:users:{cache_scope()}page={page}&per_page={per_page}"
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
 
     offset = (page - 1) * per_page
     users = (
-        User.select(User.id, User.username, User.email, User.created_at)
+        scope_query(User.select(User.id, User.username, User.email, User.created_at), User.id)
         .order_by(User.id)
         .limit(per_page)
         .offset(offset)
@@ -132,6 +132,7 @@ def list_users():
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def get_user_cached(user_id):
+    require_owner(user_id)
     cached = get_user(user_id)
     if cached is not None:
         return jsonify(cached)
@@ -181,6 +182,7 @@ def create_user():
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def update_user(user_id):
+    require_owner(user_id)
     try:
         user = User.get_by_id(user_id)
     except User.DoesNotExist:
@@ -212,6 +214,7 @@ def update_user(user_id):
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
 def delete_user_endpoint(user_id):
+    require_owner(user_id)
     try:
         user = User.get_by_id(user_id)
         owned = list(Url.select(Url.id, Url.short_code).where(Url.user == user_id))

@@ -12,7 +12,9 @@ from app.cache import (
 )
 from app.models.event import Event
 from app.utils.ratelimit import rate_limit
-from app.utils.auth import require_auth
+from app.utils.auth import require_auth, require_owner, scope_query, cache_scope
+from app.models.url import Url
+from flask import g
 from app.utils.validation import (
     require_dict,
     require_int,
@@ -61,7 +63,7 @@ def list_events():
     for name in ("url_id", "user_id", "event_type", "before_id"):
         if name in request.args:
             key_parts.append(f"{name}={request.args[name][:128]}")
-    cache_key = "list:events:" + "&".join(key_parts)
+    cache_key = "list:events:" + cache_scope() + "&".join(key_parts)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
@@ -75,6 +77,7 @@ def list_events():
         Event.details,
     )
 
+    query = scope_query(query, Event.user)
     if "url_id" in request.args:
         query = query.where(Event.url == _require_int_query_param("url_id"))
     if "user_id" in request.args:
@@ -118,7 +121,8 @@ def create_event():
     data = require_json("Invalid JSON received for create_event")
 
     url_id = data.get("url_id")
-    user_id = data.get("user_id")
+    user_id = data.get("user_id", g.current_user_id)
+    require_owner(user_id)
     event_type = data.get("event_type")
     details = data.get("details", {})
 
@@ -128,9 +132,12 @@ def create_event():
     require_int(user_id, "user_id must be an integer", "user_id must be an integer")
     require_str(event_type, "event_type must be a string", "event_type must be a string")
 
-    if get_url(url_id) is None:
-        current_app.logger.warning("URL not found")
-        abort(400, description="URL not found")
+    url = Url.get_or_none(Url.id == url_id)
+    if url is None:
+        abort(404)
+    require_owner(url.user_id)
+    if url.user_id != user_id:
+        abort(400, description="Event user must own the URL")
 
     if get_user(user_id) is None:
         current_app.logger.warning("User not found")
