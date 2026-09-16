@@ -21,7 +21,11 @@ def test_upgrade_creates_schema_and_records_history():
     database = SqliteDatabase(":memory:")
     models = _models(database)
     with database:
-        assert upgrade(database, models) == ["001_canonical_schema", "002_link_metadata", "003_delivery"]
+        assert upgrade(database, models) == [
+            "001_canonical_schema",
+            "002_link_metadata",
+            "003_delivery",
+        ]
         assert applied(database) == {"001_canonical_schema", "002_link_metadata", "003_delivery"}
         assert discover()[0][0] == "001_canonical_schema"
 
@@ -52,4 +56,8 @@ def test_upgrade_applies_pending_migrations_in_order():
         fresh = SqliteDatabase(":memory:")
         fresh_models = _models(fresh)
         with fresh:
-            assert upgrade(fresh, fresh_models) == ["001_canonical_schema", "002_link_metadata", "003_delivery"]
+            assert upgrade(fresh, fresh_models) == [
+                "001_canonical_schema",
+                "002_link_metadata",
+                "003_delivery",
+            ]

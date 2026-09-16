@@ -17,7 +17,9 @@ def app(monkeypatch):
     from app import cache
 
     database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
-    models = [User, Url, Event, ApiKey, RequestLog]
+    from app.database import models as schema
+
+    models = [User, Url, Event, ApiKey, RequestLog, schema.LinkMetadata]
     with database.bind_ctx(models):
         database.create_tables(models)
         instance = Flask(__name__)
