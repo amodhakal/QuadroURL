@@ -79,8 +79,6 @@ class ListHandler(logging.Handler):
                     record.exc_info
                 )
             log_records.append(log_data)
-            if len(log_records) > 200:
-                del log_records[:-200]
         except Exception:
             self.handleError(record)
 
