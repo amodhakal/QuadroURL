@@ -54,6 +54,9 @@ services:
       - POSTGRES_DB=${DATABASE_NAME}
       - POSTGRES_USER=${DATABASE_USER}
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    # Connection budget: max_connections=400 here must cover every pool
+    # documented in docs/capacity.md — re-check the scaling rule before
+    # raising replicas/workers/pool sizes on either side.
     command: ["postgres", "-c", "max_connections=400"]
     ports:
       - "${DATABASE_PORT}:5432"

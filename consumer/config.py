@@ -26,6 +26,9 @@ DATABASE_PASSWORD = os.environ.get("DATABASE_PASSWORD", "postgres")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 
+# NOTE (#157): per consumer *process* pools, budgeted against Postgres
+# max_connections — see docs/capacity.md scaling rule before changing
+# these defaults.
 DB_MAX_CONNECTIONS_LOGS = int(os.environ.get("DB_MAX_CONNECTIONS_LOGS", "10"))
 DB_MAX_CONNECTIONS_EVENTS = int(os.environ.get("DB_MAX_CONNECTIONS_EVENTS", "10"))
 DB_MAX_CONNECTIONS_CREATES = int(os.environ.get("DB_MAX_CONNECTIONS_CREATES", "5"))
