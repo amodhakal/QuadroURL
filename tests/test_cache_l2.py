@@ -15,6 +15,7 @@ import app.cache as cache
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def reset_cache_state():
     """Reset L1, inflight, and L2 connection state before/after each test.
@@ -70,6 +71,7 @@ def _backdate_stale(key, value, ttl=1):
 # _Encoder
 # ---------------------------------------------------------------------------
 
+
 def test_encoder_default_non_datetime_raises():
     """_Encoder.default on a non-datetime object should raise TypeError."""
     enc = cache._Encoder()
@@ -90,6 +92,7 @@ def test_encoder_default_datetime_is_isoformat():
 # _l1_get hard expiry
 # ---------------------------------------------------------------------------
 
+
 def test_l1_get_hard_expiry_pops_entry():
     """A negative TTL entry expires immediately and is popped on read."""
     cache._l1_set("k", "v", ttl=-1)
@@ -102,6 +105,7 @@ def test_l1_get_hard_expiry_pops_entry():
 # ---------------------------------------------------------------------------
 # get_l2
 # ---------------------------------------------------------------------------
+
 
 def test_get_l2_unavailable_flag_returns_none():
     cache._l2_unavailable = True
@@ -127,6 +131,7 @@ def test_get_l2_connection_error_sets_unavailable(monkeypatch):
 # ---------------------------------------------------------------------------
 # _resolve_miss
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_miss_negative_sentinel_in_l1(monkeypatch):
     """_resolve_miss returns None immediately when L1 holds the sentinel."""
@@ -176,12 +181,15 @@ def test_resolve_miss_concurrent_waiters_read_sentinel():
 # _background_refresh
 # ---------------------------------------------------------------------------
 
+
 def test_background_refresh_non_primary_returns(monkeypatch):
     """_background_refresh returns immediately when another refresh holds the lock."""
     cache._l1_set("k", "v", ttl=300)
     cache._acquire_inflight("k")  # become primary, holding the event
     submitted = {"n": 0}
-    monkeypatch.setattr(cache._executor, "submit", lambda fn: submitted.__setitem__("n", submitted["n"] + 1))
+    monkeypatch.setattr(
+        cache._executor, "submit", lambda fn: submitted.__setitem__("n", submitted["n"] + 1)
+    )
     cache._background_refresh("k", lambda: "x", 300)
     assert submitted["n"] == 0
 
@@ -204,6 +212,7 @@ def test_background_refresh_negative_path():
 # ---------------------------------------------------------------------------
 # get_user / get_url / get_url_by_short_code stale refresh
 # ---------------------------------------------------------------------------
+
 
 def test_get_user_stale_triggers_background_refresh(monkeypatch):
     _backdate_stale("user:1", {"id": 1, "username": "old"})
@@ -236,9 +245,9 @@ def test_get_url_by_short_code_stale_triggers_refresh(monkeypatch):
 # L2 negative + positive paths (get_user / get_url / get_url_by_short_code)
 # ---------------------------------------------------------------------------
 
+
 def test_get_user_l2_negative_and_positive(monkeypatch):
-    fake = FakeRedis({"user:9": "null",
-                      "user:10": json.dumps({"id": 10, "username": "u"})})
+    fake = FakeRedis({"user:9": "null", "user:10": json.dumps({"id": 10, "username": "u"})})
     monkeypatch.setattr(cache, "get_l2", lambda: fake)
 
     result = cache.get_user(9)
@@ -251,8 +260,7 @@ def test_get_user_l2_negative_and_positive(monkeypatch):
 
 
 def test_get_url_l2_negative_and_positive(monkeypatch):
-    fake = FakeRedis({"url:9": "null",
-                      "url:10": json.dumps({"id": 10, "short_code": "x"})})
+    fake = FakeRedis({"url:9": "null", "url:10": json.dumps({"id": 10, "short_code": "x"})})
     monkeypatch.setattr(cache, "get_l2", lambda: fake)
 
     assert cache.get_url(9) is None
@@ -262,8 +270,9 @@ def test_get_url_l2_negative_and_positive(monkeypatch):
 
 
 def test_get_url_by_short_code_l2_negative_and_positive(monkeypatch):
-    fake = FakeRedis({"short_code:n": "null",
-                      "short_code:p": json.dumps({"id": 11, "short_code": "p"})})
+    fake = FakeRedis(
+        {"short_code:n": "null", "short_code:p": json.dumps({"id": 11, "short_code": "p"})}
+    )
     monkeypatch.setattr(cache, "get_l2", lambda: fake)
 
     assert cache.get_url_by_short_code("n") is None
@@ -275,6 +284,7 @@ def test_get_url_by_short_code_l2_negative_and_positive(monkeypatch):
 # ---------------------------------------------------------------------------
 # delete / clear helpers
 # ---------------------------------------------------------------------------
+
 
 def test_delete_url_by_short_code_removes_from_l1():
     cache._l1_set("short_code:abc", {"id": 1}, ttl=300)
@@ -296,6 +306,7 @@ def test_clear_all_urls_removes_matching_l1_keys():
 # _l2_fire_and_forget exception guard
 # ---------------------------------------------------------------------------
 
+
 def test_l2_fire_and_forget_survives_submit_exception(monkeypatch):
     """A failure in _executor.submit should not propagate to the caller."""
 
@@ -310,9 +321,7 @@ def test_resolve_miss_positive_cached_value():
     """A positive value already in L1 is returned without calling fetch_fn
     (covers line 230)."""
     cache._l1_set("k", {"id": 1}, ttl=300)
-    result = cache._resolve_miss(
-        "k", lambda: {"id": 999}, 300
-    )
+    result = cache._resolve_miss("k", lambda: {"id": 999}, 300)
     assert result == {"id": 1}
 
 
@@ -336,7 +345,6 @@ def test_get_url_by_short_code_db_fetch(app):
     result = cache.get_url_by_short_code("scdb1")
     assert result is not None
     assert result["short_code"] == "scdb1"
-
 
 
 def test_get_url_by_short_code_negative_sentinel_l1():

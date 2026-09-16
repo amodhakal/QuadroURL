@@ -6,7 +6,6 @@ from peewee import (
     DateTimeField,
     ForeignKeyField,
     BooleanField,
-    Index,
 )
 
 from app.database import BaseModel

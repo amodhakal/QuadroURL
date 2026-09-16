@@ -15,13 +15,7 @@ def send_alert(title: str, message: str, level: str = "warning"):
         return
 
     color = 16711680 if level == "critical" else 16776960  # red or yellow
-    payload = {
-        "embeds": [{
-            "title": f"🚨 {title}",
-            "description": message,
-            "color": color
-        }]
-    }
+    payload = {"embeds": [{"title": f"🚨 {title}", "description": message, "color": color}]}
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
         logger.info(f"Alert sent: {title}")
@@ -53,15 +47,16 @@ def _monitor(app_url: str, interval: int, fail_threshold: int = 3):
         if not healthy and not service_was_down and consecutive_failures >= fail_threshold:
             send_alert(
                 "Service Down",
-                f"`{app_url}` failed {consecutive_failures} consecutive health checks — the service may be down.",
-                level="critical"
+                f"`{app_url}` failed {consecutive_failures} consecutive "
+                "health checks — the service may be down.",
+                level="critical",
             )
             service_was_down = True
         elif healthy and service_was_down and consecutive_successes >= 2:
             send_alert(
                 "Service Recovered",
                 f"`{app_url}` is back online and passing health checks.",
-                level="warning"
+                level="warning",
             )
             service_was_down = False
 
@@ -71,7 +66,9 @@ def start_alerting(app_url: str = "http://127.0.0.1:5000", interval: int = 60):
         if t.name == "alert-monitor" and t.is_alive():
             logger.info("Alert monitor already running — skipping duplicate start")
             return t
-    t = threading.Thread(target=_monitor, args=(app_url, interval), daemon=True, name="alert-monitor")
+    t = threading.Thread(
+        target=_monitor, args=(app_url, interval), daemon=True, name="alert-monitor"
+    )
     t.start()
     logger.info(f"Alert monitor started — checking {app_url}/health every {interval}s")
     return t

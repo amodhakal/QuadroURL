@@ -9,6 +9,7 @@ from app.routes.urls import format_url, generate_short_code
 # generate_short_code(): Input = length, Output = alphanumeric string
 # ---------------------------------------------------------------------------
 
+
 def test_generate_short_code_default_length():
     """Input: no args. Output: 6-char alphanumeric string."""
     code = generate_short_code()
@@ -32,6 +33,7 @@ def test_generate_short_code_produces_different_codes():
 # ---------------------------------------------------------------------------
 # format_url(): Input = Url model instance, Output = dict with user_id key
 # ---------------------------------------------------------------------------
+
 
 @patch("app.routes.urls.model_to_dict")
 def test_format_url_renames_user_to_user_id(mock_m2d):
@@ -72,6 +74,7 @@ def test_format_url_preserves_other_fields(mock_m2d):
 # ---------------------------------------------------------------------------
 # create_event(): Input = params, Output = publish_event called with payload
 # ---------------------------------------------------------------------------
+
 
 @patch("app.utils.events.publish_event")
 def test_create_event_calls_publish_event(mock_publish):

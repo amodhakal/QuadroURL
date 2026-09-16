@@ -11,11 +11,14 @@ def test_list_events_empty(client):
 
 def test_list_events_after_url_creation(client, sample_user):
     """Creating a URL should produce a 'created' event."""
-    client.post("/urls", json={
-        "user_id": sample_user.id,
-        "original_url": "https://example.com",
-        "title": "Test",
-    })
+    client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com",
+            "title": "Test",
+        },
+    )
 
     flush_events()
     response = client.get("/events")
@@ -27,11 +30,14 @@ def test_list_events_after_url_creation(client, sample_user):
 
 
 def test_event_has_required_fields(client, sample_user):
-    client.post("/urls", json={
-        "user_id": sample_user.id,
-        "original_url": "https://example.com",
-        "title": "Fields test",
-    })
+    client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com",
+            "title": "Fields test",
+        },
+    )
 
     flush_events()
     events = client.get("/events").get_json()
@@ -46,11 +52,14 @@ def test_event_has_required_fields(client, sample_user):
 
 def test_event_details_is_dict(client, sample_user):
     """The details field should be parsed from JSON string into a dict."""
-    client.post("/urls", json={
-        "user_id": sample_user.id,
-        "original_url": "https://example.com/detail",
-        "title": "Detail test",
-    })
+    client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com/detail",
+            "title": "Detail test",
+        },
+    )
 
     flush_events()
     events = client.get("/events").get_json()
@@ -61,11 +70,14 @@ def test_event_details_is_dict(client, sample_user):
 
 def test_update_url_produces_event(client, sample_user):
     """Updating a URL title should produce an 'updated' event."""
-    url_resp = client.post("/urls", json={
-        "user_id": sample_user.id,
-        "original_url": "https://example.com",
-        "title": "Before",
-    })
+    url_resp = client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com",
+            "title": "Before",
+        },
+    )
     url_id = url_resp.get_json()["id"]
 
     client.put(f"/urls/{url_id}", json={"title": "After"})
@@ -212,12 +224,15 @@ def test_list_events_malformed_details(app, client, sample_url, sample_user):
 
 
 def test_create_event_success(client, sample_url, sample_user):
-    response = client.post("/events", json={
-        "url_id": sample_url.id,
-        "user_id": sample_user.id,
-        "event_type": "click",
-        "details": {"foo": "bar"},
-    })
+    response = client.post(
+        "/events",
+        json={
+            "url_id": sample_url.id,
+            "user_id": sample_user.id,
+            "event_type": "click",
+            "details": {"foo": "bar"},
+        },
+    )
     assert response.status_code == 201
     data = response.get_json()
     assert data["url_id"] == sample_url.id
@@ -227,11 +242,14 @@ def test_create_event_success(client, sample_url, sample_user):
 
 
 def test_create_event_details_must_be_object(client, sample_url, sample_user):
-    response = client.post("/events", json={
-        "url_id": sample_url.id,
-        "user_id": sample_user.id,
-        "event_type": "click",
-        "details": "not an object",
-    })
+    response = client.post(
+        "/events",
+        json={
+            "url_id": sample_url.id,
+            "user_id": sample_user.id,
+            "event_type": "click",
+            "details": "not an object",
+        },
+    )
     assert response.status_code == 400
     assert response.get_json().get("error") == "details must be an object"

@@ -8,7 +8,6 @@ import redis
 from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
 from peewee import (
     AutoField,
-    BooleanField,
     CharField,
     DateTimeField,
     FloatField,
@@ -90,14 +89,16 @@ signal.signal(signal.SIGTERM, handle_signal)
 
 
 def create_consumer(group_id):
-    return Consumer({
-        "bootstrap.servers": config.KAFKA_BROKER,
-        "group.id": group_id,
-        "auto.offset.reset": "earliest",
-        "enable.auto.commit": False,
-        "max.poll.interval.ms": 300000,
-        "session.timeout.ms": 30000,
-    })
+    return Consumer(
+        {
+            "bootstrap.servers": config.KAFKA_BROKER,
+            "group.id": group_id,
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": False,
+            "max.poll.interval.ms": 300000,
+            "session.timeout.ms": 30000,
+        }
+    )
 
 
 def commit_one(consumer, msg):
@@ -435,7 +436,9 @@ def main():
     }
     runner = runners.get(consumer_type)
     if runner is None:
-        logger.error(f"Unknown CONSUMER_TYPE={consumer_type}. Must be one of: logs, events, creates")
+        logger.error(
+            f"Unknown CONSUMER_TYPE={consumer_type}. Must be one of: logs, events, creates"
+        )
         sys.exit(1)
 
     runner()

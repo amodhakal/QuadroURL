@@ -43,17 +43,20 @@ end
 
 _script_obj = None
 
+
 def get_script(client):
     global _script_obj
     if _script_obj is None:
         _script_obj = client.register_script(TOKEN_BUCKET_SCRIPT)
     return _script_obj
 
+
 def default_key_func():
     from app.utils.request_ctx import get_client_ip
 
     ip = get_client_ip()
     return f"{ip}:{request.endpoint or request.path}"
+
 
 def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600):
     """
@@ -68,6 +71,7 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
     :param key_func: Callable that returns a unique string identifier for the rate limit bucket
     :param ttl: Redis key TTL in seconds
     """
+
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -94,7 +98,10 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
 
             try:
                 script = get_script(client)
-                result = script(keys=[tokens_key, timestamp_key], args=[capacity, refill_rate, 1, ttl])
+                result = script(
+                    keys=[tokens_key, timestamp_key],
+                    args=[capacity, refill_rate, 1, ttl],
+                )
                 allowed = int(result[0])
                 remaining = float(result[1])
             except Exception as e:
@@ -110,7 +117,7 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
             headers = {
                 "X-RateLimit-Limit": str(capacity),
                 "X-RateLimit-Remaining": str(max(0, int(remaining))),
-                "X-RateLimit-Reset": str(int(time.time() + retry_after))
+                "X-RateLimit-Reset": str(int(time.time() + retry_after)),
             }
 
             if not allowed:
@@ -126,4 +133,5 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
             return response
 
         return wrapper
+
     return decorator

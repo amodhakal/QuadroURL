@@ -1,7 +1,5 @@
 """Tests for the /prometheus-metrics endpoint."""
 
-from app.routes.prometheus import CONTENT_TYPE_LATEST
-
 
 def test_prometheus_metrics(client):
     response = client.get("/prometheus-metrics")

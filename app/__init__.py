@@ -2,10 +2,8 @@ import json
 import logging
 import os
 import re
-import sys
 import threading
 import time
-import traceback
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -77,9 +75,7 @@ class ListHandler(logging.Handler):
             except RuntimeError:
                 pass
             if record.exc_info:
-                log_data["exception"] = self._formatter.formatException(
-                    record.exc_info
-                )
+                log_data["exception"] = self._formatter.formatException(record.exc_info)
             log_records.append(log_data)
         except Exception:
             self.handleError(record)
@@ -87,9 +83,7 @@ class ListHandler(logging.Handler):
 
 def configure_logging(app):
     log_level = (
-        logging.DEBUG
-        if os.environ.get("LOG_LEVEL", "").upper() == "DEBUG"
-        else logging.INFO
+        logging.DEBUG if os.environ.get("LOG_LEVEL", "").upper() == "DEBUG" else logging.INFO
     )
     json_handler = logging.StreamHandler()
     json_handler.setFormatter(JsonFormatter())
@@ -142,9 +136,7 @@ def start_system_metrics_sampler(interval=5):
                 pass
             time.sleep(interval)
 
-    t = threading.Thread(
-        target=_run, name="system-metrics-sampler", daemon=True
-    )
+    t = threading.Thread(target=_run, name="system-metrics-sampler", daemon=True)
     t.start()
     return t
 
@@ -158,7 +150,10 @@ def _cached_kafka_check(app, get_producer_fn):
     """Lightweight cached Kafka readiness probe (#140)."""
     now = time.monotonic()
     with _kafka_check_lock:
-        if now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S and _kafka_check_cache["result"] is not None:
+        if (
+            now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S
+            and _kafka_check_cache["result"] is not None
+        ):
             return _kafka_check_cache["result"]
     try:
         get_producer_fn().list_topics(timeout=2)
@@ -184,9 +179,15 @@ def create_app():
 
     # Observability endpoints poll themselves every few seconds; counting
     # them would inflate RPS/latency baselines (#135).
-    _METRICS_EXCLUDED = frozenset({
-        "/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics",
-    })
+    _METRICS_EXCLUDED = frozenset(
+        {
+            "/health",
+            "/metrics",
+            "/logs",
+            "/dashboard",
+            "/prometheus-metrics",
+        }
+    )
 
     @app.before_request
     def log_request():
@@ -215,17 +216,23 @@ def create_app():
         # Bound cardinality: use the matched route template, not the raw
         # path with IDs/codes (#123, #154).
         try:
-            endpoint = request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
+            endpoint = (
+                request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
+            )
         except Exception:
             endpoint = request.endpoint or request.path
         record_request_end(request.method, endpoint, response.status_code, latency_ms)
 
-        REQUEST_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
+        REQUEST_COUNT.labels(
+            method=request.method, endpoint=endpoint, status=response.status_code
+        ).inc()
         REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
         REQUESTS_IN_PROGRESS.dec()
 
         if response.status_code >= 400:
-            ERROR_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
+            ERROR_COUNT.labels(
+                method=request.method, endpoint=endpoint, status=response.status_code
+            ).inc()
 
         short_code = ""
         sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
@@ -238,17 +245,19 @@ def create_app():
         user_agent = request.headers.get("User-Agent", "")
 
         try:
-            publish_log_event({
-                "user_agent": user_agent,
-                "client_ip": client_ip,
-                "method": request.method,
-                "path": request.path,
-                "status_code": response.status_code,
-                "latency_ms": round(latency_ms, 2),
-                "short_code": short_code,
-                "request_id": get_request_id(),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+            publish_log_event(
+                {
+                    "user_agent": user_agent,
+                    "client_ip": client_ip,
+                    "method": request.method,
+                    "path": request.path,
+                    "status_code": response.status_code,
+                    "latency_ms": round(latency_ms, 2),
+                    "short_code": short_code,
+                    "request_id": get_request_id(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
         except Exception:
             app.logger.exception("Failed to publish request log to Kafka")
 
@@ -288,7 +297,9 @@ def create_app():
         checks["kafka"] = _cached_kafka_check(app, get_producer)
 
         ready = all(v == "ok" for v in checks.values())
-        return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
+        return jsonify(status="ok" if ready else "not_ready", checks=checks), (
+            200 if ready else 503
+        )
 
     @app.errorhandler(400)
     def bad_request(error):
@@ -332,6 +343,7 @@ def create_app():
     # - atexit flush is registered once per process.
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer, publish_log_event
+
     if os.environ.get("ALERT_MONITOR_ENABLED", "false").lower() == "true":
         app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
         start_alerting(app_url=app_url, interval=60)
@@ -339,6 +351,7 @@ def create_app():
     start_system_metrics_sampler()
 
     import atexit
+
     if not getattr(create_app, "_atexit_registered", False):
         atexit.register(flush_producer)
         create_app._atexit_registered = True

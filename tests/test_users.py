@@ -7,6 +7,7 @@ import io
 # POST /users — Create a single user
 # ---------------------------------------------------------------------------
 
+
 def test_create_user(client):
     response = client.post("/users", json={"username": "newuser", "email": "new@example.com"})
     assert response.status_code == 201
@@ -45,15 +46,14 @@ def test_create_user_duplicate_username(client, sample_user):
 
 
 def test_create_user_duplicate_email(client, sample_user):
-    response = client.post(
-        "/users", json={"username": "otheruser", "email": sample_user.email}
-    )
+    response = client.post("/users", json={"username": "otheruser", "email": sample_user.email})
     assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
 # GET /users — List users (paginated envelope)
 # ---------------------------------------------------------------------------
+
 
 def test_list_users_empty(client):
     response = client.get("/users")
@@ -89,6 +89,7 @@ def test_list_users_pagination(client):
 # GET /users/<id> — Get a single user
 # ---------------------------------------------------------------------------
 
+
 def test_get_user_by_id(client, sample_user):
     response = client.get(f"/users/{sample_user.id}")
     assert response.status_code == 200
@@ -106,19 +107,16 @@ def test_get_user_not_found(client):
 # PUT /users/<id> — Update user
 # ---------------------------------------------------------------------------
 
+
 def test_update_user_username(client, sample_user):
-    response = client.put(
-        f"/users/{sample_user.id}", json={"username": "updated_name"}
-    )
+    response = client.put(f"/users/{sample_user.id}", json={"username": "updated_name"})
     assert response.status_code == 200
     data = response.get_json()
     assert data["username"] == "updated_name"
 
 
 def test_update_user_email(client, sample_user):
-    response = client.put(
-        f"/users/{sample_user.id}", json={"email": "updated@example.com"}
-    )
+    response = client.put(f"/users/{sample_user.id}", json={"email": "updated@example.com"})
     assert response.status_code == 200
     assert response.get_json()["email"] == "updated@example.com"
 
@@ -129,15 +127,14 @@ def test_update_user_not_found(client):
 
 
 def test_update_user_no_body(client, sample_user):
-    response = client.put(
-        f"/users/{sample_user.id}", data="", content_type="application/json"
-    )
+    response = client.put(f"/users/{sample_user.id}", data="", content_type="application/json")
     assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
 # POST /users/bulk — CSV bulk import
 # ---------------------------------------------------------------------------
+
 
 def test_bulk_import_users(client, users_csv):
     file_data, filename = users_csv
@@ -204,6 +201,7 @@ def test_get_user_by_id_cache_miss(app, client):
 
     # Ensure a real cache miss (L1 and L2 cleared for this key).
     import app.cache as cache
+
     cache._l1.clear()
     r = get_l2()
     if r:
@@ -225,7 +223,6 @@ def test_delete_user(client, sample_user):
 def test_delete_user_nonexistent(client):
     response = client.delete("/users/99999")
     assert response.status_code == 200
-
 
 
 def test_get_user_cached_db_fetch_when_cache_misses(app, client, sample_user, monkeypatch):

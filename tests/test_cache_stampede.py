@@ -12,6 +12,7 @@ import app.cache as cache
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Clear L1 cache and inflight state before each test."""
@@ -25,6 +26,7 @@ def clear_cache():
 # ---------------------------------------------------------------------------
 # L1 TTL jitter
 # ---------------------------------------------------------------------------
+
 
 def test_jitter_ttl_within_range():
     """Jitter should keep TTL within +/- 10 % of the original."""
@@ -42,6 +44,7 @@ def test_jitter_ttl_zero_or_negative():
 # ---------------------------------------------------------------------------
 # Single-flight deduplication
 # ---------------------------------------------------------------------------
+
 
 def test_single_flight_deduplicates_concurrent_misses():
     """Multiple concurrent misses for the same key should only call fetch_fn once."""
@@ -98,6 +101,7 @@ def test_single_flight_returns_none_for_missing_key():
 # Negative caching
 # ---------------------------------------------------------------------------
 
+
 def test_negative_cache_stores_sentinel():
     """After a miss that returns None, the L1 cache should hold the negative sentinel."""
     cache._resolve_miss("test:neg", lambda: None, ttl=300)
@@ -119,6 +123,7 @@ def test_negative_cache_has_short_ttl():
 # ---------------------------------------------------------------------------
 # Probabilistic early expiration (stale-while-revalidate)
 # ---------------------------------------------------------------------------
+
 
 def test_stale_entry_triggers_background_refresh():
     """A stale-but-not-expired entry should trigger a background refresh."""
@@ -173,6 +178,7 @@ def test_non_stale_entry_does_not_trigger_refresh():
 # ---------------------------------------------------------------------------
 # Integration: get_user with mocked DB
 # ---------------------------------------------------------------------------
+
 
 def test_get_user_returns_cached_value():
     """get_user should return value from L1 cache without calling DB."""
@@ -242,6 +248,7 @@ def test_get_user_negative_cache_on_db_miss(monkeypatch):
 # Integration: get_url with mocked DB
 # ---------------------------------------------------------------------------
 
+
 def test_get_url_returns_cached_value():
     """get_url should return value from L1 cache without calling DB."""
     cache._l1_set("url:1", {"id": 1, "short_code": "abc"}, ttl=300)
@@ -264,6 +271,7 @@ def test_get_url_negative_cache_on_db_miss(monkeypatch):
 # ---------------------------------------------------------------------------
 # set / delete / clear
 # ---------------------------------------------------------------------------
+
 
 def test_set_user_populates_l1():
     cache.set_user(1, {"id": 1, "username": "test"}, ttl=300)
@@ -302,6 +310,7 @@ def test_delete_url_removes_from_l1():
 # ---------------------------------------------------------------------------
 # L1 LRU eviction
 # ---------------------------------------------------------------------------
+
 
 def test_l1_eviction_when_over_max():
     """L1 cache should evict oldest entries when exceeding _L1_MAX."""

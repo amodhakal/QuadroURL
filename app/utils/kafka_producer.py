@@ -19,9 +19,7 @@ def _on_delivery(err, msg):
     global _delivery_ok, _delivery_failed
     if err is not None:
         _delivery_failed += 1
-        logger.error(
-            f"Kafka delivery failed topic={msg.topic() if msg else '?'}: {err}"
-        )
+        logger.error(f"Kafka delivery failed topic={msg.topic() if msg else '?'}: {err}")
     else:
         _delivery_ok += 1
 
@@ -38,17 +36,19 @@ def _get_producer():
     global _producer
     if _producer is None:
         broker = os.environ.get("KAFKA_BROKER", "kafka:9092")
-        _producer = Producer({
-            "bootstrap.servers": broker,
-            "queue.buffering.max.messages": int(
-                os.environ.get("KAFKA_BUFFER_MAX_MESSAGES", 200000)
-            ),
-            "queue.buffering.max.kbytes": int(
-                os.environ.get("KAFKA_BUFFER_MAX_KBYTES", 102400)
-            ),
-            "linger.ms": 5,
-            "batch.num.messages": 1000,
-        })
+        _producer = Producer(
+            {
+                "bootstrap.servers": broker,
+                "queue.buffering.max.messages": int(
+                    os.environ.get("KAFKA_BUFFER_MAX_MESSAGES", 200000)
+                ),
+                "queue.buffering.max.kbytes": int(
+                    os.environ.get("KAFKA_BUFFER_MAX_KBYTES", 102400)
+                ),
+                "linger.ms": 5,
+                "batch.num.messages": 1000,
+            }
+        )
         logger.info(f"Kafka producer initialized: {broker}")
     return _producer
 
@@ -80,9 +80,7 @@ def _produce(topic, data, key=None):
         except BufferError:
             if time.time() >= deadline:
                 logger.error(f"Kafka producer queue full for topic={topic}, message dropped")
-                raise ProducerBackpressureError(
-                    f"Kafka producer buffer full for topic={topic}"
-                )
+                raise ProducerBackpressureError(f"Kafka producer buffer full for topic={topic}")
             producer.poll(0.2)
         except Exception:
             logger.exception(f"Failed to publish to Kafka topic={topic}")
@@ -92,6 +90,7 @@ def _produce(topic, data, key=None):
 def _sync_write(model, **kwargs):
     """Direct DB fallback used when KAFKA_SYNC_FALLBACK=1 (tests / local dev)."""
     from app.database import db
+
     db.connect(reuse_if_open=True)
     with db.atomic():
         return model.create(**kwargs)
@@ -101,6 +100,7 @@ def publish_log_event(data: dict):
     topic = os.environ.get("KAFKA_TOPIC_REQUEST_LOGS", "request-logs")
     if os.environ.get("KAFKA_SYNC_FALLBACK") == "1":
         from app.models.request_log import RequestLog
+
         _sync_write(
             RequestLog,
             user_agent=data.get("user_agent", ""),
@@ -120,6 +120,7 @@ def publish_event(data: dict):
     topic = os.environ.get("KAFKA_TOPIC_URL_EVENTS", "url-events")
     if os.environ.get("KAFKA_SYNC_FALLBACK") == "1":
         from app.models.event import Event
+
         details = data.get("details", {})
         if isinstance(details, dict):
             details = json.dumps(details)
@@ -162,9 +163,7 @@ def _create_url_sync(data):
     db.connect(reuse_if_open=True)
     url = None
     for _ in range(5):
-        short_code = "".join(
-            secrets.choice(string.ascii_letters + string.digits) for _ in range(6)
-        )
+        short_code = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(6))
         try:
             url = Url.create(
                 user_id=user_id,
@@ -184,15 +183,17 @@ def _create_url_sync(data):
     set_url(url.id, result)
     set_url_by_short_code(short_code, result)
 
-    publish_event({
-        "url_id": url.id,
-        "user_id": url.user_id,
-        "event_type": "created",
-        "details": {
-            "short_code": url.short_code,
-            "original_url": url.original_url,
-        },
-    })
+    publish_event(
+        {
+            "url_id": url.id,
+            "user_id": url.user_id,
+            "event_type": "created",
+            "details": {
+                "short_code": url.short_code,
+                "original_url": url.original_url,
+            },
+        }
+    )
     return result
 
 

@@ -26,12 +26,8 @@ DATA_DIR = os.path.join("./data")
 @users_bp.route("/users/bulk", methods=["POST"])
 @rate_limit(capacity=10, refill_rate=1.0)
 def bulk_import_users():
-    if not request.content_type or not request.content_type.startswith(
-        "multipart/form-data"
-    ):
-        current_app.logger.warning(
-            f"Invalid Content-Type for bulk import: {request.content_type}"
-        )
+    if not request.content_type or not request.content_type.startswith("multipart/form-data"):
+        current_app.logger.warning(f"Invalid Content-Type for bulk import: {request.content_type}")
         abort(415, description="Content-Type must be multipart/form-data")
 
     if "file" not in request.files:
@@ -52,7 +48,11 @@ def bulk_import_users():
         abort(400, description="Could not read CSV file")
 
     reader = csv.DictReader(text.splitlines())
-    if not reader.fieldnames or "username" not in reader.fieldnames or "email" not in reader.fieldnames:
+    if (
+        not reader.fieldnames
+        or "username" not in reader.fieldnames
+        or "email" not in reader.fieldnames
+    ):
         abort(400, description="CSV must include username and email columns")
 
     rows = []
@@ -158,9 +158,7 @@ def create_user():
         abort(400, description=f"Unknown fields: {sorted(unknown)}")
 
     try:
-        user = User.create(
-            username=username.strip(), email=email.strip()
-        )
+        user = User.create(username=username.strip(), email=email.strip())
     except Exception as e:
         current_app.logger.exception(f"Failed to create user: {e}")
         abort(400, description="Could not create user (duplicate?)")

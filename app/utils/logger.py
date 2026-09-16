@@ -1,14 +1,18 @@
 import logging
 import json
 
+
 class JSONFormatter(logging.Formatter):
     def format(self, record):
-        return json.dumps({
-            "timestamp": self.formatTime(record),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "module": record.module,
-        })
+        return json.dumps(
+            {
+                "timestamp": self.formatTime(record),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "module": record.module,
+            }
+        )
+
 
 def setup_logger(name="quadroPE"):
     logger = logging.getLogger(name)

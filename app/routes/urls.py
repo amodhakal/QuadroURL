@@ -124,12 +124,14 @@ def create_url():
     request_id = str(uuid.uuid4())
 
     try:
-        created = publish_url_create({
-            "request_id": request_id,
-            "user_id": user_id,
-            "original_url": original_url,
-            "title": title,
-        })
+        created = publish_url_create(
+            {
+                "request_id": request_id,
+                "user_id": user_id,
+                "original_url": original_url,
+                "title": title,
+            }
+        )
     except RuntimeError:
         # Short-code retries exhausted (sync fallback). Static message —
         # safe to surface via the 500 handler's intentional-message path.
@@ -144,14 +146,14 @@ def create_url():
         clear_list_cache("list:events:")
         return jsonify(created), 201
 
-    current_app.logger.info(
-        f"URL create requested: request_id={request_id} user_id={user_id}"
-    )
+    current_app.logger.info(f"URL create requested: request_id={request_id} user_id={user_id}")
 
-    return jsonify({
-        "request_id": request_id,
-        "status": "pending",
-    }), 202
+    return jsonify(
+        {
+            "request_id": request_id,
+            "status": "pending",
+        }
+    ), 202
 
 
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
@@ -193,19 +195,23 @@ def get_url_status(request_id):
         abort(500, description="Corrupted status payload")
 
     if status_data.get("status") == "error":
-        return jsonify({
-            "status": "error",
-            "error": status_data.get("error", "Unknown error"),
-        }), 500
+        return jsonify(
+            {
+                "status": "error",
+                "error": status_data.get("error", "Unknown error"),
+            }
+        ), 500
 
     if status_data.get("status") == "ready":
-        return jsonify({
-            "status": "ready",
-            "id": status_data.get("id"),
-            "short_code": status_data.get("short_code"),
-            "original_url": status_data.get("original_url"),
-            "title": status_data.get("title"),
-        })
+        return jsonify(
+            {
+                "status": "ready",
+                "id": status_data.get("id"),
+                "short_code": status_data.get("short_code"),
+                "original_url": status_data.get("original_url"),
+                "title": status_data.get("title"),
+            }
+        )
 
     return jsonify({"status": "pending"})
 
@@ -300,9 +306,7 @@ def get_url_cached(url_id):
         current_app.logger.warning(f"URL not found for id={url_id}")
         abort(404)
     except Exception as error:
-        current_app.logger.exception(
-            f"Unexpected error fetching URL id={url_id}: {error}"
-        )
+        current_app.logger.exception(f"Unexpected error fetching URL id={url_id}: {error}")
         abort(500, description="Internal server error")
 
     data = format_url(url)
@@ -433,9 +437,7 @@ def redirect_short_code(short_code):
 
     track_click(data, short_code)
 
-    current_app.logger.info(
-        f"Redirecting short code {short_code} to {data['original_url']}"
-    )
+    current_app.logger.info(f"Redirecting short code {short_code} to {data['original_url']}")
     return flask_redirect(data["original_url"])
 
 
@@ -446,7 +448,5 @@ def redirect_short_code_legacy(short_code):
 
     track_click(data, short_code)
 
-    current_app.logger.info(
-        f"Redirecting short code {short_code} to {data['original_url']}"
-    )
+    current_app.logger.info(f"Redirecting short code {short_code} to {data['original_url']}")
     return jsonify({"url": data["original_url"], "short_code": short_code})
