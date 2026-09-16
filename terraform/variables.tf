@@ -11,7 +11,6 @@ variable "project_name" {
 variable "db_password" {
   type      = string
   sensitive = true
-  default   = "LoadTestPass123!"
 }
 
 variable "fargate_task_count" {

@@ -43,13 +43,15 @@ def record_request_end(method, path, status_code, latency_ms):
             total_errors += 1
             errors_by_status[status_code] += 1
 
-        request_log.append({
-            "timestamp": time.time(),
-            "method": method,
-            "path": path,
-            "status": status_code,
-            "latency_ms": round(latency_ms, 2),
-        })
+        request_log.append(
+            {
+                "timestamp": time.time(),
+                "method": method,
+                "path": path,
+                "status": status_code,
+                "latency_ms": round(latency_ms, 2),
+            }
+        )
 
 
 def get_metrics_snapshot():

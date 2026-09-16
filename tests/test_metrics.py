@@ -1,7 +1,5 @@
 """Tests for the /metrics endpoint and the in-memory metrics store."""
 
-import collections
-
 import app.metrics_store as ms
 
 EXPECTED_KEYS = [
@@ -62,13 +60,15 @@ def test_get_metrics_snapshot_populated():
         latencies = [500, 400, 300, 200, 100]
         paths = ["/users", "/health", "/nonexistent", "/metrics", "/dashboard"]
         for lat, path in zip(latencies, paths):
-            ms.request_log.append({
-                "timestamp": 0.0,
-                "method": "GET",
-                "path": path,
-                "status": 404 if path == "/nonexistent" else 200,
-                "latency_ms": lat,
-            })
+            ms.request_log.append(
+                {
+                    "timestamp": 0.0,
+                    "method": "GET",
+                    "path": path,
+                    "status": 404 if path == "/nonexistent" else 200,
+                    "latency_ms": lat,
+                }
+            )
         ms.total_requests = 5
         ms.total_errors = 1
         ms.traffic_by_endpoint["GET /users"] = 3

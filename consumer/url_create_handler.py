@@ -5,7 +5,6 @@ import string
 import time
 from datetime import datetime, timezone
 
-import redis
 from peewee import (
     AutoField,
     BooleanField,
@@ -13,11 +12,8 @@ from peewee import (
     DateTimeField,
     IntegerField,
     Model,
-    TextField,
 )
-from playhouse.pool import PooledPostgresqlDatabase
 
-import config
 
 logger = logging.getLogger("consumer.url_create")
 
@@ -75,10 +71,12 @@ def handle_url_create_batch(messages, db, redis_client):
                 if not all([request_id, user_id, original_url, title]):
                     logger.warning(f"Invalid url-create message: {data}")
                     if request_id:
-                        pending_results.append((
-                            request_id,
-                            {"status": "error", "error": "Missing required fields"},
-                        ))
+                        pending_results.append(
+                            (
+                                request_id,
+                                {"status": "error", "error": "Missing required fields"},
+                            )
+                        )
                     continue
 
                 url = None
@@ -97,38 +95,42 @@ def handle_url_create_batch(messages, db, redis_client):
                         continue
 
                 if url is None:
-                    logger.error(
-                        f"Failed to generate short code for request_id={request_id}"
+                    logger.error(f"Failed to generate short code for request_id={request_id}")
+                    pending_results.append(
+                        (
+                            request_id,
+                            {
+                                "status": "error",
+                                "error": "Failed to generate unique short code",
+                            },
+                        )
                     )
-                    pending_results.append((
-                        request_id,
-                        {
-                            "status": "error",
-                            "error": "Failed to generate unique short code",
-                        },
-                    ))
                     continue
 
-                pending_results.append((
-                    request_id,
+                pending_results.append(
+                    (
+                        request_id,
+                        {
+                            "status": "ready",
+                            "id": url.id,
+                            "short_code": url.short_code,
+                            "original_url": url.original_url,
+                            "title": url.title,
+                        },
+                    )
+                )
+                created_events.append(
                     {
-                        "status": "ready",
-                        "id": url.id,
-                        "short_code": url.short_code,
-                        "original_url": url.original_url,
-                        "title": url.title,
-                    },
-                ))
-                created_events.append({
-                    "url_id": url.id,
-                    "user_id": url.user_id,
-                    "event_type": "created",
-                    "details": {
-                        "short_code": url.short_code,
-                        "original_url": url.original_url,
-                    },
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
+                        "url_id": url.id,
+                        "user_id": url.user_id,
+                        "event_type": "created",
+                        "details": {
+                            "short_code": url.short_code,
+                            "original_url": url.original_url,
+                        },
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
                 created_count += 1
     except Exception:
         logger.exception("Failed to process url-create batch")

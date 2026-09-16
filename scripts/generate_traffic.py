@@ -6,9 +6,11 @@ import requests
 
 BASE = "http://localhost"
 
+
 def health_checks(session, n=5):
     for _ in range(n):
         session.get(f"{BASE}/health")
+
 
 def browse_users(session):
     r = session.get(f"{BASE}/users")
@@ -20,6 +22,7 @@ def browse_users(session):
 
     for uid in random.sample(range(1, min(total, 400) + 1), min(10, total)):
         session.get(f"{BASE}/users/{uid}")
+
 
 def browse_urls(session):
     r = session.get(f"{BASE}/urls")
@@ -34,25 +37,35 @@ def browse_urls(session):
         for uid in random.sample(range(1, min(total, 200) + 1), sample_size):
             session.get(f"{BASE}/urls/{uid}")
 
+
 def create_users(session, n=5):
     for i in range(n):
-        session.post(f"{BASE}/users", json={
-            "username": f"loadtest_user_{int(time.time())}_{i}",
-            "email": f"loadtest_{int(time.time())}_{i}@test.com",
-        })
+        session.post(
+            f"{BASE}/users",
+            json={
+                "username": f"loadtest_user_{int(time.time())}_{i}",
+                "email": f"loadtest_{int(time.time())}_{i}@test.com",
+            },
+        )
+
 
 def create_urls(session, n=5):
     for i in range(n):
-        session.post(f"{BASE}/urls", json={
-            "user_id": random.randint(1, 50),
-            "original_url": f"https://example.com/load-test/{int(time.time())}/{i}",
-            "title": f"Load Test URL {i}",
-        })
+        session.post(
+            f"{BASE}/urls",
+            json={
+                "user_id": random.randint(1, 50),
+                "original_url": f"https://example.com/load-test/{int(time.time())}/{i}",
+                "title": f"Load Test URL {i}",
+            },
+        )
+
 
 def list_events(session):
     session.get(f"{BASE}/events")
     session.get(f"{BASE}/events?event_type=created")
     session.get(f"{BASE}/events?user_id={random.randint(1, 20)}")
+
 
 def generate_errors(session):
     session.post(f"{BASE}/users", json={"bad": True})
@@ -62,7 +75,10 @@ def generate_errors(session):
     session.get(f"{BASE}/urls/999999")
     session.get(f"{BASE}/nonexistent-route")
     session.post(f"{BASE}/users", json={"username": "", "email": "x@y.com"})
-    session.post(f"{BASE}/urls", json={"user_id": 999999, "original_url": "https://x.com", "title": "t"})
+    session.post(
+        f"{BASE}/urls", json={"user_id": 999999, "original_url": "https://x.com", "title": "t"}
+    )
+
 
 def run_round(session, round_num):
     print(f"  Round {round_num}: ", end="", flush=True)
@@ -116,7 +132,7 @@ def main():
         run_round(session, i)
         time.sleep(random.uniform(0.5, 2.0))
 
-    print(f"\nDone! Open Grafana at http://localhost:3000 to see the data.")
+    print("\nDone! Open Grafana at http://localhost:3000 to see the data.")
 
 
 if __name__ == "__main__":

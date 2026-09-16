@@ -13,9 +13,6 @@ build/
 # Environment variables
 .env
 
-# uv
-uv.lock
-
 # IDE
 .vscode/
 .idea/
@@ -40,3 +37,7 @@ venv/
 # Terraform
 terraform/.terraform.lock.hcl
 terraform/.terraform/
+
+# Load-test artifacts (generated results + reports; keep sources like *.py/locustfiles tracked)
+loadtests/results_*/
+loadtests/*.pdf

@@ -15,6 +15,7 @@ import json
 # Helper: assert every error response is clean JSON
 # ---------------------------------------------------------------------------
 
+
 def assert_clean_json_error(response, expected_status):
     assert response.status_code == expected_status
     assert response.content_type == "application/json"
@@ -29,6 +30,7 @@ def assert_clean_json_error(response, expected_status):
 # Global error handlers
 # ---------------------------------------------------------------------------
 
+
 def test_404_is_json(client):
     response = client.get("/this/route/does/not/exist")
     assert_clean_json_error(response, 404)
@@ -42,6 +44,7 @@ def test_405_method_not_allowed(client):
 # ---------------------------------------------------------------------------
 # POST /users — bad inputs
 # ---------------------------------------------------------------------------
+
 
 def test_create_user_integer_username(client):
     response = client.post("/users", json={"username": 12345, "email": "a@b.com"})
@@ -73,9 +76,7 @@ def test_create_user_no_body(client):
 
 
 def test_create_user_malformed_json(client):
-    response = client.post(
-        "/users", data="{broken json", content_type="application/json"
-    )
+    response = client.post("/users", data="{broken json", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
@@ -108,6 +109,7 @@ def test_create_user_duplicate_returns_json_error(client, sample_user):
 # GET /users/<id> — bad inputs
 # ---------------------------------------------------------------------------
 
+
 def test_get_user_nonexistent_id(client):
     response = client.get("/users/99999")
     assert_clean_json_error(response, 404)
@@ -129,28 +131,26 @@ def test_get_user_negative_id(client):
 # PUT /users/<id> — bad inputs
 # ---------------------------------------------------------------------------
 
+
 def test_update_user_nonexistent(client):
     response = client.put("/users/99999", json={"username": "ghost"})
     assert_clean_json_error(response, 404)
 
 
 def test_update_user_empty_json(client, sample_user):
-    response = client.put(
-        f"/users/{sample_user.id}", data="", content_type="application/json"
-    )
+    response = client.put(f"/users/{sample_user.id}", data="", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
 def test_update_user_malformed_json(client, sample_user):
-    response = client.put(
-        f"/users/{sample_user.id}", data="{bad", content_type="application/json"
-    )
+    response = client.put(f"/users/{sample_user.id}", data="{bad", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
 # ---------------------------------------------------------------------------
 # POST /users/bulk — bad inputs
 # ---------------------------------------------------------------------------
+
 
 def test_bulk_import_no_file_field(client):
     response = client.post("/users/bulk", content_type="multipart/form-data")
@@ -159,19 +159,17 @@ def test_bulk_import_no_file_field(client):
 
 def test_bulk_import_non_csv_file(client):
     import io
+
     bad = (io.BytesIO(b"not,csv"), "data.txt")
-    response = client.post(
-        "/users/bulk", data={"file": bad}, content_type="multipart/form-data"
-    )
+    response = client.post("/users/bulk", data={"file": bad}, content_type="multipart/form-data")
     assert_clean_json_error(response, 400)
 
 
 def test_bulk_import_empty_csv(client):
     import io
+
     empty = (io.BytesIO(b"username,email,created_at\n"), "empty.csv")
-    response = client.post(
-        "/users/bulk", data={"file": empty}, content_type="multipart/form-data"
-    )
+    response = client.post("/users/bulk", data={"file": empty}, content_type="multipart/form-data")
     assert response.status_code == 200
     assert response.content_type == "application/json"
     assert response.get_json()["imported"] == 0
@@ -180,6 +178,7 @@ def test_bulk_import_empty_csv(client):
 # ---------------------------------------------------------------------------
 # POST /urls — bad inputs
 # ---------------------------------------------------------------------------
+
 
 def test_create_url_no_body(client):
     response = client.post("/urls", content_type="application/json")
@@ -192,51 +191,51 @@ def test_create_url_malformed_json(client):
 
 
 def test_create_url_string_user_id(client):
-    response = client.post("/urls", json={
-        "user_id": "not_int", "original_url": "https://x.com", "title": "T"
-    })
+    response = client.post(
+        "/urls", json={"user_id": "not_int", "original_url": "https://x.com", "title": "T"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_float_user_id(client):
-    response = client.post("/urls", json={
-        "user_id": 1.5, "original_url": "https://x.com", "title": "T"
-    })
+    response = client.post(
+        "/urls", json={"user_id": 1.5, "original_url": "https://x.com", "title": "T"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_null_user_id(client):
-    response = client.post("/urls", json={
-        "user_id": None, "original_url": "https://x.com", "title": "T"
-    })
+    response = client.post(
+        "/urls", json={"user_id": None, "original_url": "https://x.com", "title": "T"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_nonexistent_user(client):
-    response = client.post("/urls", json={
-        "user_id": 99999, "original_url": "https://x.com", "title": "T"
-    })
+    response = client.post(
+        "/urls", json={"user_id": 99999, "original_url": "https://x.com", "title": "T"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_integer_original_url(client, sample_user):
-    response = client.post("/urls", json={
-        "user_id": sample_user.id, "original_url": 12345, "title": "T"
-    })
+    response = client.post(
+        "/urls", json={"user_id": sample_user.id, "original_url": 12345, "title": "T"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_integer_title(client, sample_user):
-    response = client.post("/urls", json={
-        "user_id": sample_user.id, "original_url": "https://x.com", "title": 999
-    })
+    response = client.post(
+        "/urls", json={"user_id": sample_user.id, "original_url": "https://x.com", "title": 999}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_url_empty_strings(client, sample_user):
-    response = client.post("/urls", json={
-        "user_id": sample_user.id, "original_url": "", "title": ""
-    })
+    response = client.post(
+        "/urls", json={"user_id": sample_user.id, "original_url": "", "title": ""}
+    )
     assert_clean_json_error(response, 400)
 
 
@@ -248,6 +247,7 @@ def test_create_url_missing_all_fields(client):
 # ---------------------------------------------------------------------------
 # GET /urls/<id> — bad inputs
 # ---------------------------------------------------------------------------
+
 
 def test_get_url_nonexistent(client):
     response = client.get("/urls/99999")
@@ -263,28 +263,26 @@ def test_get_url_string_id(client):
 # PUT /urls/<id> — bad inputs
 # ---------------------------------------------------------------------------
 
+
 def test_update_url_nonexistent(client):
     response = client.put("/urls/99999", json={"title": "Ghost"})
     assert_clean_json_error(response, 404)
 
 
 def test_update_url_empty_json(client, sample_url):
-    response = client.put(
-        f"/urls/{sample_url.id}", data="", content_type="application/json"
-    )
+    response = client.put(f"/urls/{sample_url.id}", data="", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
 def test_update_url_malformed_json(client, sample_url):
-    response = client.put(
-        f"/urls/{sample_url.id}", data="{{bad", content_type="application/json"
-    )
+    response = client.put(f"/urls/{sample_url.id}", data="{{bad", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
 # ---------------------------------------------------------------------------
 # Redirect endpoints — bad inputs
 # ---------------------------------------------------------------------------
+
 
 def test_redirect_nonexistent_short_code(client):
     response = client.get("/urls/ZZZZZZ/redirect")
@@ -294,6 +292,7 @@ def test_redirect_nonexistent_short_code(client):
 def test_redirect_inactive_url(client, sample_user):
     """Deactivated URLs should return 404, not redirect."""
     from app.models.url import Url
+
     url = Url.create(
         user=sample_user,
         short_code="dead01",
@@ -309,41 +308,36 @@ def test_redirect_inactive_url(client, sample_user):
 # POST /events — bad inputs
 # ---------------------------------------------------------------------------
 
+
 def test_create_event_no_body(client):
     response = client.post("/events", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
 def test_create_event_string_url_id(client):
-    response = client.post("/events", json={
-        "url_id": "bad", "user_id": 1, "event_type": "click"
-    })
+    response = client.post("/events", json={"url_id": "bad", "user_id": 1, "event_type": "click"})
     assert_clean_json_error(response, 400)
 
 
 def test_create_event_string_user_id(client):
-    response = client.post("/events", json={
-        "url_id": 1, "user_id": "bad", "event_type": "click"
-    })
+    response = client.post("/events", json={"url_id": 1, "user_id": "bad", "event_type": "click"})
     assert_clean_json_error(response, 400)
 
 
 def test_create_event_missing_event_type(client):
-    response = client.post("/events", json={
-        "url_id": 1, "user_id": 1
-    })
+    response = client.post("/events", json={"url_id": 1, "user_id": 1})
     assert_clean_json_error(response, 400)
 
 
 def test_create_event_nonexistent_url(client, sample_user):
-    response = client.post("/events", json={
-        "url_id": 99999, "user_id": sample_user.id, "event_type": "click"
-    })
+    response = client.post(
+        "/events", json={"url_id": 99999, "user_id": sample_user.id, "event_type": "click"}
+    )
     assert_clean_json_error(response, 400)
 
 
 def test_create_event_nonexistent_user(client, sample_url):
-    response = client.post("/events", json={
-        "url_id": sample_url.id, "user_id": 99999, "event_type": "click"
-    })
+    response = client.post(
+        "/events", json={"url_id": sample_url.id, "user_id": 99999, "event_type": "click"}
+    )
     assert_clean_json_error(response, 400)

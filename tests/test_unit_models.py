@@ -20,6 +20,7 @@ from app.models.event import Event
 # User model
 # ---------------------------------------------------------------------------
 
+
 def test_user_is_base_model():
     assert issubclass(User, BaseModel)
 
@@ -55,6 +56,7 @@ def test_user_created_at_has_default():
 # ---------------------------------------------------------------------------
 # Url model
 # ---------------------------------------------------------------------------
+
 
 def test_url_is_base_model():
     assert issubclass(Url, BaseModel)
@@ -104,6 +106,7 @@ def test_url_has_save_override():
 # ---------------------------------------------------------------------------
 # Event model
 # ---------------------------------------------------------------------------
+
 
 def test_event_is_base_model():
     assert issubclass(Event, BaseModel)

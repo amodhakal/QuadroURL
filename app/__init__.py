@@ -1,11 +1,7 @@
-import json
-import logging
 import os
 import re
-import sys
 import threading
 import time
-import traceback
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -25,90 +21,10 @@ from app.routes.prometheus import (
     REQUEST_LATENCY,
     REQUESTS_IN_PROGRESS,
 )
+from app.utils.logger import JsonFormatter, ListHandler, configure_logging
 
 
-class JsonFormatter(logging.Formatter):
-    def format(self, record):
-        log_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-        try:
-            from app.utils.request_ctx import get_client_ip, get_request_id
-
-            log_data["method"] = request.method
-            log_data["path"] = request.path
-            log_data["remote_addr"] = get_client_ip()
-            log_data["request_id"] = get_request_id()
-        except RuntimeError:
-            pass
-        if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_data)
-
-
-class ListHandler(logging.Handler):
-    """In-memory log handler that stores records as structured dicts.
-
-    Delegates exception formatting to a ``logging.Formatter`` instance so
-    that ``formatException`` is available (it is defined on ``Formatter``,
-    not ``Handler``).
-    """
-
-    _formatter = logging.Formatter()
-
-    def emit(self, record):
-        try:
-            log_data = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-            }
-            try:
-                from app.utils.request_ctx import get_client_ip, get_request_id
-
-                log_data["method"] = request.method
-                log_data["path"] = request.path
-                log_data["remote_addr"] = get_client_ip()
-                log_data["request_id"] = get_request_id()
-            except RuntimeError:
-                pass
-            if record.exc_info:
-                log_data["exception"] = self._formatter.formatException(
-                    record.exc_info
-                )
-            log_records.append(log_data)
-        except Exception:
-            self.handleError(record)
-
-
-def configure_logging(app):
-    log_level = (
-        logging.DEBUG
-        if os.environ.get("LOG_LEVEL", "").upper() == "DEBUG"
-        else logging.INFO
-    )
-    json_handler = logging.StreamHandler()
-    json_handler.setFormatter(JsonFormatter())
-    list_handler = ListHandler()
-
-    app.logger.handlers.clear()
-    app.logger.addHandler(json_handler)
-    app.logger.addHandler(list_handler)
-    app.logger.setLevel(log_level)
-    app.logger.propagate = False
-
-    for name in ("", "werkzeug", "peewee"):
-        logger = logging.getLogger(name) if name else logging.getLogger()
-        if not logger.handlers:
-            logger.addHandler(json_handler)
-            logger.addHandler(list_handler)
-            logger.setLevel(log_level)
-            if name:
-                logger.propagate = False
+__all__ = ["JsonFormatter", "ListHandler", "configure_logging", "create_app", "log_records"]
 
 
 def _sample_system_metrics():
@@ -142,9 +58,7 @@ def start_system_metrics_sampler(interval=5):
                 pass
             time.sleep(interval)
 
-    t = threading.Thread(
-        target=_run, name="system-metrics-sampler", daemon=True
-    )
+    t = threading.Thread(target=_run, name="system-metrics-sampler", daemon=True)
     t.start()
     return t
 
@@ -158,7 +72,10 @@ def _cached_kafka_check(app, get_producer_fn):
     """Lightweight cached Kafka readiness probe (#140)."""
     now = time.monotonic()
     with _kafka_check_lock:
-        if now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S and _kafka_check_cache["result"] is not None:
+        if (
+            now - _kafka_check_cache["at"] < KAFKA_CHECK_TTL_S
+            and _kafka_check_cache["result"] is not None
+        ):
             return _kafka_check_cache["result"]
     try:
         get_producer_fn().list_topics(timeout=2)
@@ -184,9 +101,15 @@ def create_app():
 
     # Observability endpoints poll themselves every few seconds; counting
     # them would inflate RPS/latency baselines (#135).
-    _METRICS_EXCLUDED = frozenset({
-        "/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics",
-    })
+    _METRICS_EXCLUDED = frozenset(
+        {
+            "/health",
+            "/metrics",
+            "/logs",
+            "/dashboard",
+            "/prometheus-metrics",
+        }
+    )
 
     @app.before_request
     def log_request():
@@ -203,54 +126,66 @@ def create_app():
     def track_metrics(response):
         if request.path in _METRICS_EXCLUDED:
             return response
-        from app.utils.request_ctx import get_client_ip, get_request_id
-
         try:
-            response.headers["X-Request-ID"] = get_request_id()
-        except Exception:
-            pass
-        start = getattr(request, "_start_time", None)
-        latency_s = time.perf_counter() - start if start is not None else 0.0
-        latency_ms = latency_s * 1000
-        # Bound cardinality: use the matched route template, not the raw
-        # path with IDs/codes (#123, #154).
-        try:
-            endpoint = request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
-        except Exception:
-            endpoint = request.endpoint or request.path
-        record_request_end(request.method, endpoint, response.status_code, latency_ms)
+            from app.utils.request_ctx import get_client_ip, get_request_id
 
-        REQUEST_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
-        REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
-        REQUESTS_IN_PROGRESS.dec()
+            try:
+                response.headers["X-Request-ID"] = get_request_id()
+            except Exception:
+                pass
+            start = getattr(request, "_start_time", None)
+            latency_s = time.perf_counter() - start if start is not None else 0.0
+            latency_ms = latency_s * 1000
+            # Bound cardinality: use the matched route template, not the raw
+            # path with IDs/codes (#123, #154).
+            try:
+                endpoint = (
+                    request.url_rule.rule
+                    if request.url_rule
+                    else (request.endpoint or request.path)
+                )
+            except Exception:
+                endpoint = request.endpoint or request.path
+            record_request_end(request.method, endpoint, response.status_code, latency_ms)
 
-        if response.status_code >= 400:
-            ERROR_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
+            REQUEST_COUNT.labels(
+                method=request.method, endpoint=endpoint, status=response.status_code
+            ).inc()
+            REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
 
-        short_code = ""
-        sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
-            r"^/urls/([^/]+)/redirect$", request.path
-        )
-        if sc_match:
-            short_code = sc_match.group(1)
+            if response.status_code >= 400:
+                ERROR_COUNT.labels(
+                    method=request.method, endpoint=endpoint, status=response.status_code
+                ).inc()
 
-        client_ip = get_client_ip()
-        user_agent = request.headers.get("User-Agent", "")
+            short_code = ""
+            sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
+                r"^/urls/([^/]+)/redirect$", request.path
+            )
+            if sc_match:
+                short_code = sc_match.group(1)
 
-        try:
-            publish_log_event({
-                "user_agent": user_agent,
-                "client_ip": client_ip,
-                "method": request.method,
-                "path": request.path,
-                "status_code": response.status_code,
-                "latency_ms": round(latency_ms, 2),
-                "short_code": short_code,
-                "request_id": get_request_id(),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-        except Exception:
-            app.logger.exception("Failed to publish request log to Kafka")
+            client_ip = get_client_ip()
+            user_agent = request.headers.get("User-Agent", "")
+
+            try:
+                publish_log_event(
+                    {
+                        "user_agent": user_agent,
+                        "client_ip": client_ip,
+                        "method": request.method,
+                        "path": request.path,
+                        "status_code": response.status_code,
+                        "latency_ms": round(latency_ms, 2),
+                        "short_code": short_code,
+                        "request_id": get_request_id(),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            except Exception:
+                app.logger.exception("Failed to publish request log to Kafka")
+        finally:
+            REQUESTS_IN_PROGRESS.dec()
 
         return response
 
@@ -288,7 +223,9 @@ def create_app():
         checks["kafka"] = _cached_kafka_check(app, get_producer)
 
         ready = all(v == "ok" for v in checks.values())
-        return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
+        return jsonify(status="ok" if ready else "not_ready", checks=checks), (
+            200 if ready else 503
+        )
 
     @app.errorhandler(400)
     def bad_request(error):
@@ -332,6 +269,7 @@ def create_app():
     # - atexit flush is registered once per process.
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer, publish_log_event
+
     if os.environ.get("ALERT_MONITOR_ENABLED", "false").lower() == "true":
         app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
         start_alerting(app_url=app_url, interval=60)
@@ -339,6 +277,7 @@ def create_app():
     start_system_metrics_sampler()
 
     import atexit
+
     if not getattr(create_app, "_atexit_registered", False):
         atexit.register(flush_producer)
         create_app._atexit_registered = True

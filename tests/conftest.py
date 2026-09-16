@@ -29,6 +29,7 @@ def clean_tables(app):
     """Wipe all rows before each test so tests are isolated."""
     from app import _kafka_check_cache, cache
     from app.utils.events import flush_events
+
     flush_events()
     cache._l1.clear()
     # Reset the cached /ready Kafka probe so one test's result can't leak
@@ -38,7 +39,7 @@ def clean_tables(app):
     with app.app_context():
         db.execute_sql("DELETE FROM event")
         db.execute_sql("DELETE FROM url")
-        db.execute_sql("DELETE FROM \"user\"")
+        db.execute_sql('DELETE FROM "user"')
     yield
 
 

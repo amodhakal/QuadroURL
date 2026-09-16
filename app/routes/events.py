@@ -12,6 +12,13 @@ from app.cache import (
 )
 from app.models.event import Event
 from app.utils.ratelimit import rate_limit
+from app.utils.validation import (
+    require_dict,
+    require_int,
+    require_json,
+    require_str,
+    validate_offset_params,
+)
 
 
 events_bp = Blueprint("events", __name__)
@@ -32,10 +39,7 @@ def format_event(event):
 def list_events():
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
-    if offset is None or offset < 0:
-        abort(400, description="offset must be >= 0")
-    if size is None or size < 1 or size > 100:
-        abort(400, description="size must be between 1 and 100")
+    offset, size = validate_offset_params(offset, size)
 
     key_parts = [f"offset={offset}", f"size={size}"]
     for name in ("url_id", "user_id", "event_type", "before_id"):
@@ -94,29 +98,18 @@ def list_events():
 @events_bp.route("/events", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
 def create_event():
-    data = request.get_json(silent=True)
-    if not data:
-        current_app.logger.warning("Invalid JSON received for create_event")
-        abort(400, description="Invalid JSON")
+    data = require_json("Invalid JSON received for create_event")
 
     url_id = data.get("url_id")
     user_id = data.get("user_id")
     event_type = data.get("event_type")
     details = data.get("details", {})
 
-    if not isinstance(details, dict):
-        current_app.logger.warning("details must be an object")
-        abort(400, description="details must be an object")
+    require_dict(details, "details must be an object", "details must be an object")
 
-    if not url_id or not isinstance(url_id, int):
-        current_app.logger.warning("url_id must be an integer")
-        abort(400, description="url_id must be an integer")
-    if not user_id or not isinstance(user_id, int):
-        current_app.logger.warning("user_id must be an integer")
-        abort(400, description="user_id must be an integer")
-    if not event_type or not isinstance(event_type, str):
-        current_app.logger.warning("event_type must be a string")
-        abort(400, description="event_type must be a string")
+    require_int(url_id, "url_id must be an integer", "url_id must be an integer")
+    require_int(user_id, "user_id must be an integer", "user_id must be an integer")
+    require_str(event_type, "event_type must be a string", "event_type must be a string")
 
     if get_url(url_id) is None:
         current_app.logger.warning("URL not found")

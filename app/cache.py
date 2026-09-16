@@ -80,6 +80,7 @@ _inflight_lock = threading.Lock()
 # JSON encoder
 # ---------------------------------------------------------------------------
 
+
 class _Encoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, datetime):
@@ -90,6 +91,7 @@ class _Encoder(json.JSONEncoder):
 # ---------------------------------------------------------------------------
 # L1 helpers
 # ---------------------------------------------------------------------------
+
 
 def _jitter_ttl(ttl):
     """Add +/- 10 % jitter to *ttl* to prevent synchronized L1 evictions."""
@@ -146,6 +148,7 @@ def _l1_clear(pattern):
 # L2 Redis helpers
 # ---------------------------------------------------------------------------
 
+
 def get_l2():
     global _l2, _l2_unavailable, _l2_unavailable_since
     if _l2_unavailable:
@@ -200,6 +203,7 @@ def _l2_fire_and_forget(fn):
 # Single-flight helper
 # ---------------------------------------------------------------------------
 
+
 def _acquire_inflight(key):
     """Atomically get-or-create the Event for *key*.
 
@@ -213,6 +217,7 @@ def _acquire_inflight(key):
             return _inflight[key], True
         return _inflight[key], False
 
+
 def _clear_inflight_event(key):
     with _inflight_lock:
         _inflight.pop(key, None)
@@ -221,6 +226,7 @@ def _clear_inflight_event(key):
 # ---------------------------------------------------------------------------
 # Generic cache-miss resolution with single-flight + background refresh
 # ---------------------------------------------------------------------------
+
 
 def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
     """Resolve a cache miss for *key* using single-flight deduplication.
@@ -258,9 +264,7 @@ def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
             else:
                 _l1_set(key, value, ttl)
                 payload = json.dumps(value, cls=_Encoder)
-                _l2_fire_and_forget(
-                    lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p)
-                )
+                _l2_fire_and_forget(lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p))
             return value
         finally:
             event.set()
@@ -313,9 +317,7 @@ def _background_refresh(key, fetch_fn, ttl, negative_ttl=None):
             else:
                 _l1_set(key, value, ttl)
                 payload = json.dumps(value, cls=_Encoder)
-                _l2_fire_and_forget(
-                    lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p)
-                )
+                _l2_fire_and_forget(lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p))
         finally:
             event.set()
             _clear_inflight_event(key)
@@ -326,6 +328,7 @@ def _background_refresh(key, fetch_fn, ttl, negative_ttl=None):
 # ---------------------------------------------------------------------------
 # User cache API
 # ---------------------------------------------------------------------------
+
 
 def get_user(user_id):
     key = f"user:{user_id}"
@@ -406,6 +409,7 @@ def clear_all_users():
 # URL cache API
 # ---------------------------------------------------------------------------
 
+
 def get_url(url_id):
     key = f"url:{url_id}"
     value, is_stale = _l1_get(key)
@@ -467,6 +471,7 @@ def clear_all_urls():
 # ---------------------------------------------------------------------------
 # Short-code URL cache API
 # ---------------------------------------------------------------------------
+
 
 def get_url_by_short_code(short_code):
     key = f"short_code:{short_code}"

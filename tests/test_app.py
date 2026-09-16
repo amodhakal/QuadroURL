@@ -55,6 +55,7 @@ def test_404_response_is_json(client):
 # JsonFormatter / ListHandler coverage (app/__init__.py)
 # ---------------------------------------------------------------------------
 
+
 def _make_record(message="hello", level=logging.INFO):
     return logging.LogRecord(
         name="test.logger",
@@ -97,14 +98,13 @@ def test_json_formatter_outside_request_context_falls_back(app):
 def test_list_handler_emit_without_request_context(app):
     # Covers lines 73-74: RuntimeError from request proxy is caught.
     from app import log_records
+
     log_records.clear()
     handler = ListHandler()
     record = _make_record("list-no-context")
     handler.emit(record)
     try:
-        assert any(
-            entry.get("message") == "list-no-context" for entry in log_records
-        )
+        assert any(entry.get("message") == "list-no-context" for entry in log_records)
     finally:
         log_records.clear()
 
@@ -112,11 +112,10 @@ def test_list_handler_emit_without_request_context(app):
 def test_list_handler_truncates_cap_at_200(app):
     # Covers lines 81-83: delete old entries once len > 200.
     from app import log_records
+
     log_records.clear()
     handler = ListHandler()
-    log_records.extend(
-        [{"message": f"old-{i}"} for i in range(200)]
-    )
+    log_records.extend([{"message": f"old-{i}"} for i in range(200)])
     record = _make_record("newest")
     handler.emit(record)
     try:

@@ -31,6 +31,7 @@ class FakeProducer:
 # /ready
 # ---------------------------------------------------------------------------
 
+
 def test_ready_returns_ok_when_dependencies_up(client, monkeypatch):
     import app.cache as cache
     import app.utils.kafka_producer as kp
@@ -99,6 +100,7 @@ def test_ready_returns_503_when_kafka_down(client, monkeypatch):
 # /health stays a pure liveness check
 # ---------------------------------------------------------------------------
 
+
 def test_health_does_not_touch_db(client, monkeypatch):
     import app.database as database
 
@@ -115,14 +117,18 @@ def test_health_does_not_touch_db(client, monkeypatch):
 # Async two-phase URL create contract
 # ---------------------------------------------------------------------------
 
+
 def test_create_url_returns_202_with_request_id_when_async(client, sample_user, monkeypatch):
     monkeypatch.setenv("KAFKA_SYNC_FALLBACK", "0")
 
-    response = client.post("/urls", json={
-        "user_id": sample_user.id,
-        "original_url": "https://example.com/async",
-        "title": "Async",
-    })
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com/async",
+            "title": "Async",
+        },
+    )
     assert response.status_code == 202
     data = response.get_json()
     assert data["status"] == "pending"
@@ -150,13 +156,12 @@ def test_url_status_returns_503_when_status_store_down(client, sample_user, monk
 # Producer backpressure
 # ---------------------------------------------------------------------------
 
+
 def test_produce_raises_backpressure_error_when_queue_stays_full(monkeypatch):
     from app.utils import kafka_producer as kp
 
     monkeypatch.setenv("KAFKA_PRODUCE_TIMEOUT", "0.2")
-    monkeypatch.setattr(
-        kp, "_get_producer", lambda: FakeProducer(always_fail=True)
-    )
+    monkeypatch.setattr(kp, "_get_producer", lambda: FakeProducer(always_fail=True))
 
     try:
         kp._produce("test-topic", {"a": 1})
@@ -181,12 +186,14 @@ def test_sync_fallback_publish_event_writes_to_db(app, sample_url, sample_user, 
     monkeypatch.setenv("KAFKA_SYNC_FALLBACK", "1")
     from app.utils.kafka_producer import publish_event
 
-    publish_event({
-        "url_id": sample_url.id,
-        "user_id": sample_user.id,
-        "event_type": "click",
-        "details": {"foo": "bar"},
-    })
+    publish_event(
+        {
+            "url_id": sample_url.id,
+            "user_id": sample_user.id,
+            "event_type": "click",
+            "details": {"foo": "bar"},
+        }
+    )
 
     with app.app_context():
         count = Event.select().where(Event.event_type == "click").count()

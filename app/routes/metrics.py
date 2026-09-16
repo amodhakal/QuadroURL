@@ -18,7 +18,7 @@ def get_metrics():
 
         cpu_percent = float(CPU_USAGE._value.get())
         process_memory_mb = float(MEMORY_USAGE_MB._value.get())
-        sampler_warmed = (cpu_percent != 0.0 or process_memory_mb != 0.0)
+        sampler_warmed = cpu_percent != 0.0 or process_memory_mb != 0.0
     except Exception:
         cpu_percent = 0.0
         process_memory_mb = 0.0

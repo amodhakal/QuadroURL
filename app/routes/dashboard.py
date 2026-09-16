@@ -1,3 +1,5 @@
+# ruff: noqa: E501 — DASHBOARD_HTML is an embedded HTML/JS template; wrapping
+# lines would change the served response bytes, so line length is exempt here.
 from flask import Blueprint, Response
 
 dashboard_bp = Blueprint("dashboard", __name__)

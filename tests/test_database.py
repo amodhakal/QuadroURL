@@ -38,9 +38,7 @@ def test_db_close_releases_connection(app):
     db.connect(reuse_if_open=True)
     try:
         teardowns = [
-            fn
-            for fn in app.teardown_appcontext_funcs
-            if getattr(fn, "__name__", "") == "_db_close"
+            fn for fn in app.teardown_appcontext_funcs if getattr(fn, "__name__", "") == "_db_close"
         ]
         assert teardowns, "expected _db_close teardown to be registered"
         # Should not raise; releases the open connection.
