@@ -3,6 +3,7 @@ import logging
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 
 import redis
 from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
@@ -20,12 +21,45 @@ from playhouse.pool import PooledPostgresqlDatabase
 import config
 from url_create_handler import handle_url_create_batch
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger("consumer")
+
+class ConsumerJsonFormatter(logging.Formatter):
+    """JSON formatter emitting the same base keys as the app's JsonFormatter.
+
+    NOTE: the consumer container cannot import the ``app`` package
+    (``consumer/Dockerfile`` does ``COPY . .`` inside ``consumer/`` with
+    ``CMD ["python", "app.py"]``), so this is a local copy of the same
+    ``timestamp``/``level``/``message``/``logger`` shape rather than an
+    import. The consumer never runs inside a Flask request context, so
+    the request-scoped keys (``method``/``path``/``remote_addr``/
+    ``request_id``) do not apply here.
+    """
+
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data)
+
+
+def setup_consumer_logging():
+    """Configure the ``consumer`` logger once; repeat calls are no-ops."""
+    consumer_logger = logging.getLogger("consumer")
+    if consumer_logger.handlers:
+        return consumer_logger
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(ConsumerJsonFormatter())
+    consumer_logger.addHandler(handler)
+    consumer_logger.setLevel(logging.INFO)
+    consumer_logger.propagate = False
+    return consumer_logger
+
+
+logger = setup_consumer_logging()
 
 _MAX_CONNECTIONS = {
     "logs": config.DB_MAX_CONNECTIONS_LOGS,
