@@ -119,7 +119,7 @@ def publish_url_create(data: dict):
 
 def _create_url_sync(data):
     """Synchronous URL creation used when KAFKA_SYNC_FALLBACK=1."""
-    import random
+    import secrets
     import string
 
     from app.cache import set_url, set_url_by_short_code
@@ -135,7 +135,7 @@ def _create_url_sync(data):
     url = None
     for _ in range(5):
         short_code = "".join(
-            random.choices(string.ascii_letters + string.digits, k=6)
+            secrets.choice(string.ascii_letters + string.digits) for _ in range(6)
         )
         try:
             url = Url.create(

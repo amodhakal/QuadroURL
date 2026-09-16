@@ -1,6 +1,6 @@
 import json
 import logging
-import random
+import secrets
 import string
 import time
 from datetime import datetime, timezone
@@ -40,7 +40,7 @@ class Url(Model):
 
 
 def generate_short_code(length=6):
-    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
 
 
 def _validate(data):
