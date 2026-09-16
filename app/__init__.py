@@ -182,9 +182,15 @@ def create_app():
 
     register_routes(app)
 
+    # Observability endpoints poll themselves every few seconds; counting
+    # them would inflate RPS/latency baselines (#135).
+    _METRICS_EXCLUDED = frozenset({
+        "/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics",
+    })
+
     @app.before_request
     def log_request():
-        if request.path == "/health":
+        if request.path in _METRICS_EXCLUDED:
             return
         from app.utils.request_ctx import get_request_id
 
@@ -195,7 +201,7 @@ def create_app():
 
     @app.after_request
     def track_metrics(response):
-        if request.path == "/health":
+        if request.path in _METRICS_EXCLUDED:
             return response
         from app.utils.request_ctx import get_client_ip, get_request_id
 

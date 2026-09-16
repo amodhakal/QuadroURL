@@ -59,6 +59,29 @@ def generate_short_code(length=6):
     return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
 
 
+_BOT_UA_RE = None
+
+
+def _bot_ua_re():
+    global _BOT_UA_RE
+    if _BOT_UA_RE is None:
+        import re as _re
+
+        _BOT_UA_RE = _re.compile(
+            r"bot|crawl|spider|slurp|mediapartners|baidu|yandex|sogou|exabot|facebot|ia_archiver"
+            r"|prometheus|kube-probe|health-check|healthcheck|uptime|pingdom|datadog|newrelic",
+            _re.IGNORECASE,
+        )
+    return _BOT_UA_RE
+
+
+def is_bot_user_agent(user_agent: str) -> bool:
+    """True for crawlers/monitors whose clicks shouldn't count as engagement."""
+    if not user_agent:
+        return False
+    return bool(_bot_ua_re().search(user_agent))
+
+
 def format_url(url):
     data = model_to_dict(url, recurse=False)
     data["user_id"] = data.pop("user")
@@ -363,24 +386,46 @@ def delete_url_endpoint(url_id):
     return jsonify({}), 200
 
 
-@urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])
-@rate_limit(capacity=2000, refill_rate=200.0)
-def redirect_short_code(short_code):
+def resolve_short_code_or_404(short_code):
+    """Shared lookup for both redirect routes (#190).
+
+    Returns the cached URL dict, aborting 404 when missing/inactive.
+    """
     data = get_url_by_short_code(short_code)
     if data is None:
         current_app.logger.warning(f"Short code not found: {short_code}")
         abort(404)
-
     if not data.get("is_active", True):
         current_app.logger.warning(f"Short code inactive: {short_code}")
         abort(404)
+    return data
 
-    create_event(
-        data["id"],
-        data["user_id"],
-        "click",
-        {"short_code": short_code},
-    )
+
+def track_click(data, short_code):
+    """Best-effort click tracking: skips bots, never breaks redirects (#147)."""
+    try:
+        user_agent = request.headers.get("User-Agent", "")
+    except Exception:
+        user_agent = ""
+    if is_bot_user_agent(user_agent):
+        return
+    try:
+        create_event(
+            data["id"],
+            data["user_id"],
+            "click",
+            {"short_code": short_code},
+        )
+    except Exception:
+        current_app.logger.exception("Click tracking failed (redirect unaffected)")
+
+
+@urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])
+@rate_limit(capacity=2000, refill_rate=200.0)
+def redirect_short_code(short_code):
+    data = resolve_short_code_or_404(short_code)
+
+    track_click(data, short_code)
 
     current_app.logger.info(
         f"Redirecting short code {short_code} to {data['original_url']}"
@@ -391,21 +436,9 @@ def redirect_short_code(short_code):
 @urls_bp.route("/r/<short_code>", methods=["GET"])
 @rate_limit(capacity=2000, refill_rate=200.0)
 def redirect_short_code_legacy(short_code):
-    data = get_url_by_short_code(short_code)
-    if data is None:
-        current_app.logger.warning(f"Short code not found: {short_code}")
-        abort(404)
+    data = resolve_short_code_or_404(short_code)
 
-    if not data.get("is_active", True):
-        current_app.logger.warning(f"Short code inactive: {short_code}")
-        abort(404)
-
-    create_event(
-        data["id"],
-        data["user_id"],
-        "click",
-        {"short_code": short_code},
-    )
+    track_click(data, short_code)
 
     current_app.logger.info(
         f"Redirecting short code {short_code} to {data['original_url']}"
