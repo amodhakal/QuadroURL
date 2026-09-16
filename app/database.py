@@ -26,12 +26,6 @@ def init_db(app):
     )
     db.initialize(database)
 
-    from migrations_runner import upgrade
-
-    from app.models import User, Url, Event, RequestLog, ApiKey  # noqa: F401 (models namespace)
-
-    upgrade(database, models)
-
     @app.before_request
     def _db_connect():
         # /ready connects inside its guarded probe so failures return JSON 503.

@@ -32,14 +32,16 @@ def test_upgrade_creates_schema_and_records_history():
         # The schema is usable end to end.
         user = models.User.create(username="mig", email="mig@example.com")
         url = models.Url.create(
-            user_id=user.id, short_code="mig001",
-            original_url="https://example.com", title="Migration smoke",
+            user_id=user.id,
+            short_code="mig001",
+            original_url="https://example.com",
+            title="Migration smoke",
         )
         assert url.is_active is True
 
 
 def test_upgrade_applies_pending_migrations_in_order():
-    from migrations_runner import applied, discover, upgrade
+    from migrations_runner import applied, upgrade
 
     database = SqliteDatabase(":memory:")
     models = _models(database)
