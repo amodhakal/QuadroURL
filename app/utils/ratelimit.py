@@ -50,7 +50,9 @@ def get_script(client):
     return _script_obj
 
 def default_key_func():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+    from app.utils.request_ctx import get_client_ip
+
+    ip = get_client_ip()
     return f"{ip}:{request.endpoint or request.path}"
 
 def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600):

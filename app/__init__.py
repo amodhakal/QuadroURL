@@ -36,11 +36,12 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         try:
+            from app.utils.request_ctx import get_client_ip, get_request_id
+
             log_data["method"] = request.method
             log_data["path"] = request.path
-            log_data["remote_addr"] = request.headers.get(
-                "X-Forwarded-For", request.remote_addr
-            )
+            log_data["remote_addr"] = get_client_ip()
+            log_data["request_id"] = get_request_id()
         except RuntimeError:
             pass
         if record.exc_info:
@@ -67,11 +68,12 @@ class ListHandler(logging.Handler):
                 "message": record.getMessage(),
             }
             try:
+                from app.utils.request_ctx import get_client_ip, get_request_id
+
                 log_data["method"] = request.method
                 log_data["path"] = request.path
-                log_data["remote_addr"] = request.headers.get(
-                    "X-Forwarded-For", request.remote_addr
-                )
+                log_data["remote_addr"] = get_client_ip()
+                log_data["request_id"] = get_request_id()
             except RuntimeError:
                 pass
             if record.exc_info:
@@ -161,7 +163,10 @@ def create_app():
     def log_request():
         if request.path == "/health":
             return
+        from app.utils.request_ctx import get_request_id
+
         request._start_time = time.perf_counter()
+        get_request_id()
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
 
@@ -169,6 +174,12 @@ def create_app():
     def track_metrics(response):
         if request.path == "/health":
             return response
+        from app.utils.request_ctx import get_client_ip, get_request_id
+
+        try:
+            response.headers["X-Request-ID"] = get_request_id()
+        except Exception:
+            pass
         start = getattr(request, "_start_time", None)
         latency_s = time.perf_counter() - start if start is not None else 0.0
         latency_ms = latency_s * 1000
@@ -194,7 +205,7 @@ def create_app():
         if sc_match:
             short_code = sc_match.group(1)
 
-        client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        client_ip = get_client_ip()
         user_agent = request.headers.get("User-Agent", "")
 
         try:
@@ -206,6 +217,7 @@ def create_app():
                 "status_code": response.status_code,
                 "latency_ms": round(latency_ms, 2),
                 "short_code": short_code,
+                "request_id": get_request_id(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
         except Exception:
