@@ -135,7 +135,9 @@ the load balancer to cycle healthy instances.
 GET /ready
 ```
 
-Deep **readiness** check — verifies Postgres (`SELECT 1`), Redis (`PING`), and
+Deep **readiness** check — verifies the database is a **writable primary**
+(`pg_is_in_recovery()` is false and the session is not read-only), plus
+Redis (`PING`) and
 Kafka (metadata) are all reachable. Returns `200` with per-dependency status when
 healthy, or `503` listing the failing checks.
 

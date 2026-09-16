@@ -32,7 +32,9 @@ def init_db(app):
 
     @app.before_request
     def _db_connect():
-        if request.path in ("/health", "/metrics", "/logs", "/dashboard", "/prometheus-metrics"):
+        # /ready connects inside its guarded probe so failures return JSON 503.
+        excluded = ("/health", "/ready", "/metrics", "/logs", "/dashboard", "/prometheus-metrics")
+        if request.path in excluded:
             return
         db.connect(reuse_if_open=True)
 
