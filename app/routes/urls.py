@@ -1,3 +1,4 @@
+import json
 import random
 import string
 import uuid
@@ -105,13 +106,34 @@ def get_url_status(request_id):
         if r is None:
             abort(503, description="Status store unavailable")
         raw = r.get(f"url-pending:{request_id}")
-    except Exception:
+    except Exception as exc:
+        # Don't swallow HTTPExceptions raised by abort() above.
+        from werkzeug.exceptions import HTTPException
+
+        if isinstance(exc, HTTPException):
+            raise
+        current_app.logger.warning(f"Status store error: {exc}")
         abort(503, description="Status store unavailable")
 
     if raw is None:
         abort(404)
 
-    status_data = json.loads(raw)
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            current_app.logger.warning("Corrupted status payload (non-utf8)")
+            abort(500, description="Corrupted status payload")
+
+    try:
+        status_data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        current_app.logger.warning("Corrupted status payload (invalid JSON)")
+        abort(500, description="Corrupted status payload")
+
+    if not isinstance(status_data, dict):
+        current_app.logger.warning("Corrupted status payload (not an object)")
+        abort(500, description="Corrupted status payload")
 
     if status_data.get("status") == "error":
         return jsonify({
