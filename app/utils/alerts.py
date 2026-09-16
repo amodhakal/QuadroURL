@@ -29,8 +29,10 @@ def send_alert(title: str, message: str, level: str = "warning"):
         logger.error(f"Failed to send alert: {e}")
 
 
-def _monitor(app_url: str, interval: int):
+def _monitor(app_url: str, interval: int, fail_threshold: int = 3):
     service_was_down = False
+    consecutive_failures = 0
+    consecutive_successes = 0
     while True:
         time.sleep(interval)
         try:
@@ -39,14 +41,23 @@ def _monitor(app_url: str, interval: int):
         except Exception:
             healthy = False
 
-        if not healthy and not service_was_down:
+        if not healthy:
+            consecutive_failures += 1
+            consecutive_successes = 0
+        else:
+            consecutive_successes += 1
+            consecutive_failures = 0
+
+        # Debounce: only alert after `fail_threshold` consecutive failures
+        # so a single blip doesn't page (#145).
+        if not healthy and not service_was_down and consecutive_failures >= fail_threshold:
             send_alert(
                 "Service Down",
-                f"`{app_url}` failed its health check — the service may be down.",
+                f"`{app_url}` failed {consecutive_failures} consecutive health checks — the service may be down.",
                 level="critical"
             )
             service_was_down = True
-        elif healthy and service_was_down:
+        elif healthy and service_was_down and consecutive_successes >= 2:
             send_alert(
                 "Service Recovered",
                 f"`{app_url}` is back online and passing health checks.",
@@ -56,6 +67,11 @@ def _monitor(app_url: str, interval: int):
 
 
 def start_alerting(app_url: str = "http://127.0.0.1:5000", interval: int = 60):
-    t = threading.Thread(target=_monitor, args=(app_url, interval), daemon=True)
+    for t in threading.enumerate():
+        if t.name == "alert-monitor" and t.is_alive():
+            logger.info("Alert monitor already running — skipping duplicate start")
+            return t
+    t = threading.Thread(target=_monitor, args=(app_url, interval), daemon=True, name="alert-monitor")
     t.start()
     logger.info(f"Alert monitor started — checking {app_url}/health every {interval}s")
+    return t

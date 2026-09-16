@@ -124,8 +124,13 @@ def _sample_system_metrics():
 def start_system_metrics_sampler(interval=5):
     """Update CPU/memory gauges from a background thread.
 
-    Keeps psutil syscalls out of the request hot path.
+    Keeps psutil syscalls out of the request hot path. Guarded against
+    duplicate starts when create_app() is called repeatedly (tests,
+    reloader) — see #129.
     """
+    for t in threading.enumerate():
+        if t.name == "system-metrics-sampler" and t.is_alive():
+            return t
 
     def _run():
         while True:
@@ -271,15 +276,22 @@ def create_app():
     def service_unavailable(error):
         return jsonify({"error": str(error.description)}), 503
 
-    # Start Discord alert monitor in background
+    # Background workers are opt-in and started once (#128, #129):
+    # - the Discord monitor cannot detect a real crash from inside the
+    #   same process, so it only runs when ALERT_MONITOR_ENABLED=true;
+    # - the sampler is guarded internally against duplicate threads;
+    # - atexit flush is registered once per process.
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer, publish_log_event
-    app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
-    start_alerting(app_url=app_url, interval=60)
+    if os.environ.get("ALERT_MONITOR_ENABLED", "false").lower() == "true":
+        app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
+        start_alerting(app_url=app_url, interval=60)
 
     start_system_metrics_sampler()
 
     import atexit
-    atexit.register(flush_producer)
+    if not getattr(create_app, "_atexit_registered", False):
+        atexit.register(flush_producer)
+        create_app._atexit_registered = True
 
     return app
