@@ -89,7 +89,7 @@ class RequestLog(Model):
     status_code = IntegerField()
     latency_ms = FloatField()
     short_code = CharField(default="")
-    created_at = DateTimeField()
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         database = db
@@ -101,7 +101,7 @@ class Event(Model):
     url_id = IntegerField()
     user_id = IntegerField()
     event_type = CharField()
-    timestamp = DateTimeField()
+    timestamp = DateTimeField(default=lambda: datetime.now(timezone.utc))
     details = TextField()
 
     class Meta:

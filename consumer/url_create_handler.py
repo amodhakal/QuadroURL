@@ -31,8 +31,8 @@ class Url(Model):
     # Idempotency key written by producers (#113). Mirrors app/models/url.py;
     # nullable for rows created before the column existed.
     request_id = CharField(null=True, unique=True)
-    created_at = DateTimeField()
-    updated_at = DateTimeField()
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+    updated_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         database = None

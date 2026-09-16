@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from peewee import (
     AutoField,
@@ -24,7 +24,7 @@ class RequestLog(BaseModel):
     status_code = IntegerField()
     latency_ms = FloatField()
     short_code = CharField(default="")
-    created_at = DateTimeField(default=datetime.now)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         indexes = (

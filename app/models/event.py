@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from peewee import AutoField, CharField, DateTimeField, ForeignKeyField, TextField
 
@@ -12,7 +12,7 @@ class Event(BaseModel):
     url = ForeignKeyField(Url, backref="events")
     user = ForeignKeyField(User, backref="events")
     event_type = CharField()
-    timestamp = DateTimeField(default=datetime.now)
+    timestamp = DateTimeField(default=lambda: datetime.now(timezone.utc))
     details = TextField()
 
     class Meta:

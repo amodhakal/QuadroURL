@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from peewee import (
     AutoField,
@@ -23,8 +23,8 @@ class Url(BaseModel):
     # rows stay valid; unique so each key maps to exactly one row. Postgres
     # treats NULLs as distinct, so old rows never clash.
     request_id = CharField(null=True, unique=True)
-    created_at = DateTimeField(default=datetime.now)
-    updated_at = DateTimeField(default=datetime.now)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+    updated_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         indexes = (
@@ -34,5 +34,5 @@ class Url(BaseModel):
         )
 
     def save(self, *args, **kwargs):
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
         return super().save(*args, **kwargs)
