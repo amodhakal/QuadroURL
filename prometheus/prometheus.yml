@@ -5,6 +5,11 @@ global:
 scrape_configs:
   - job_name: "flask-app"
     metrics_path: "/prometheus-metrics"
-    static_configs:
-      - targets:
-          - "app:8000"
+    # Discover ALL app replicas instead of one random replica behind the
+    # service VIP: every scrape fans out per container IP and Prometheus
+    # sums across them, so counters/histograms read correctly with
+    # replicas > 1 (#136). On ECS this needs ecs_sd instead.
+    dns_sd_configs:
+      - names: ["app"]
+        type: A
+        port: 8000

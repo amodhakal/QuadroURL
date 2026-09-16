@@ -24,6 +24,8 @@ Principle: **reads and observability fail open; writes and readiness fail closed
 | `_produce`, other client errors | Any non-`BufferError` exception | Logs, re-raises — never silently dropped | Closed |
 | `GET /urls/<request_id>/status` | Status store (`Redis`) down or errors | `503 "Status store unavailable"` | Closed |
 | `GET /fail` chaos switch | `CHAOS_ENABLED != "true"` | `404`; wrong `CHAOS_TOKEN` → `403`; triggered → `os._exit(1)` | Closed by default |
+| Cross-worker invalidation bus (`_broadcast_invalidate`, `#118`) | Redis down | Publish swallowed; workers behave as before (staleness ≤ TTL) | Open |
+| Prometheus multiprocess scrape (`#136`) | `PROMETHEUS_MULTIPROC_DIR` unset, or worker exits | Unset: per-process metrics (legacy under-reporting). Exited worker: `live*` gauges reaped via `child_exit`; counters/histograms persist by design (cumulative) | Open (degrades) |
 
 Notes:
 
@@ -47,6 +49,7 @@ Notes:
 | `KAFKA_PRODUCE_TIMEOUT` | `5.0` (seconds) | How long `_produce` retries a full buffer before raising `ProducerBackpressureError` |
 | `CHAOS_ENABLED` | `"false"` | Must be `"true"` for `/fail` to do anything; pair with `CHAOS_TOKEN` (`#100`) |
 | `ALERT_MONITOR_ENABLED` | `"false"` | Discord crash monitor only starts when `"true"` (same-process monitor cannot detect a real crash) |
+| `PROMETHEUS_MULTIPROC_DIR` | `/tmp/prometheus-multiproc` (Dockerfile) / unset locally | When set, metrics aggregate all workers via `MultiProcessCollector`; when unset, single-process behavior |
 
 ## Operator-visible effects
 
