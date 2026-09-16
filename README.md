@@ -71,10 +71,24 @@ uv sync
 uv run run.py
 
 # Or start with gunicorn (port 8000, matching Docker)
-uv run gunicorn --bind 0.0.0.0:8000 --workers 4 --threads 4 --worker-class gthread --timeout 5 run:app
+uv run gunicorn --bind 0.0.0.0:8000 --workers 4 --threads 8 --worker-class gthread --timeout 60 run:app
 ```
 
 Set `FLASK_DEBUG=true` in `.env` for debug mode.
+
+### React client (Vite dev proxy)
+
+The SPA calls the API via relative `/api/*` paths (`API_BASE = VITE_API_URL ?? "/api"` in `client/src/lib/api.ts`).
+
+```bash
+cd client
+pnpm install
+pnpm dev   # Vite dev server (default http://localhost:5173)
+```
+
+`client/vite.config.ts` proxies `/api/*` to `http://localhost:8000/*` (stripping the `/api` prefix), so the backend must be listening on port 8000 (e.g. gunicorn as above, not the Flask dev server on 5000). Override the API base with `VITE_API_URL` (short-link host with `VITE_PUBLIC_URL`).
+
+In Docker/prod the same `/api/` prefix is served by the client's nginx (`client/nginx.conf` proxies `/api/` to `http://app:8000/`), so no CORS configuration is needed in either setup.
 
 ### Accessing Services
 
@@ -83,7 +97,7 @@ Set `FLASK_DEBUG=true` in `.env` for debug mode.
 | App (via Nginx) | http://127.0.0.1 | - |
 | App (direct, dev) | http://localhost:5000 | - |
 | Prometheus | http://localhost:9090 | - |
-| Grafana | http://localhost:3000 | admin / admin |
+| Grafana | http://localhost:3001 | from `.env` (`GF_ADMIN_USER` / `GF_ADMIN_PASSWORD`) |
 | Loki | http://localhost:3100 | - |
 
 ### Stopping Services
@@ -255,7 +269,7 @@ Content-Type: multipart/form-data
 {"imported": 25}
 ```
 
-**Note:** Drops and recreates the entire `User` table on each import.
+**Note:** Additive and non-destructive — new rows are inserted and existing usernames/emails are skipped; nothing is dropped or recreated.
 
 ---
 
@@ -599,7 +613,7 @@ All errors return JSON:
 Automates a clean, repeatable Locust benchmark sweep against the local Docker Compose stack.
 
 ```bash
-# Default: 2000, 3000, 4000, 5000 users
+# Default: 3000, 4000, 5000 users
 ./scripts/run_load_tests.sh
 
 # Custom levels, spawn rate, peak time
@@ -616,7 +630,7 @@ Automates a clean, repeatable Locust benchmark sweep against the local Docker Co
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--levels` | `2000,3000,4000,5000` | Comma-separated user counts to test |
+| `--levels` | `3000,4000,5000` | Comma-separated user counts to test |
 | `--spawn-rate` | `100` | Users spawned per second |
 | `--peak-time` | `60` | Seconds of steady-state load after ramp-up |
 | `--run-time` | auto | Fixed run-time per level (overrides auto-computed) |
@@ -796,7 +810,7 @@ Async URL creation. Consumer generates short codes, inserts into PostgreSQL, and
 
 - **Redis** — L2 cache between app replicas to prevent redundant DB calls. L1 (in-process LRU dict) avoids Redis latency for hot keys. Anti-stampede strategies: single-flight deduplication, probabilistic early expiration, negative caching, TTL jitter. Also stores pending URL creation status for async polling.
 - **Kafka** — Decouples all write operations from the request path. Three topics with different drain intervals: 5s for access logs, 1s for business events, immediate processing for URL creation. Replaces the broken 2-thread ThreadPoolExecutor that had FK race conditions and a memory leak.
-- **Nginx** — Reverse proxy and load balancer across app replicas. Connection timeouts (5s connect, 10s read) prevent slow clients from holding connections.
+- **Nginx** — Reverse proxy and load balancer across app replicas. Timeouts: edge proxy (`nginx/nginx.conf`) uses 5s connect / 60s read; the client SPA proxy (`client/nginx.conf`) uses 5s connect / 10s read.
 - **Docker Compose** — Containerized orchestration with health checks, restart policies, and persistent volumes for PostgreSQL, Redis, and Grafana.
 - **Locust** — Python-native load testing (same stack as the app). Weighted task distribution simulates realistic user behavior.
 
@@ -806,7 +820,7 @@ Async URL creation. Consumer generates short codes, inserts into PostgreSQL, and
 
 ### Grafana Dashboard
 
-Access at http://localhost:3000 (admin/admin). The pre-built "Golden Signals" dashboard shows:
+Access at http://localhost:3001 (credentials from `GF_ADMIN_USER` / `GF_ADMIN_PASSWORD` in `.env`; compose maps host port 3001 to the container's 3000). The pre-built "Golden Signals" dashboard shows:
 
 - **Latency** — avg, p50, p95, p99 response times
 - **Traffic** — requests per second, top endpoints by volume
@@ -1001,7 +1015,7 @@ QuadroURL/
 │   ├── config.py            # Per-topic configuration (drain intervals, batch sizes)
 │   ├── app.py               # Single-topic consumer (CONSUMER_TYPE=logs|events|creates), batched drains
 │   └── url_create_handler.py # Batched URL creation (short code gen, DB insert, Redis status)
-├── tests/                   # 12 test files, ~1100+ lines
+├── tests/                   # 24 test files, ~4300 lines
 ├── scripts/
 │   ├── test_locust.py       # Locust load test
 │   ├── run_load_tests.sh    # Automated sweep runner
@@ -1028,7 +1042,7 @@ QuadroURL/
 ├── prometheus/prometheus.yml # Scrapes app:8000/prometheus-metrics every 5s
 ├── grafana/                 # Dashboards + provisioning
 ├── promtail/                # Docker log collection to Loki
-├── docker-compose.yml       # app, postgres, redis, kafka, zookeeper, 3 consumer services, nginx, prometheus, grafana, loki+promtail
+├── docker-compose.yml       # client, app, postgres, redis, kafka, zookeeper, 3 consumer services, nginx, prometheus, grafana, loki+promtail
 ├── Dockerfile               # Python 3.13-slim, uv, gunicorn (env-configurable workers)
 ├── run.py                   # Entry point: create_app() + app.run()
 ├── pyproject.toml           # Package metadata (uv)
@@ -1054,7 +1068,19 @@ QuadroURL/
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for alerts |
 | `LOG_LEVEL` | `INFO` | Set to `DEBUG` for verbose logging |
 | `GUNICORN_WORKERS` | `4` | Number of gunicorn worker processes |
-| `GUNICORN_THREADS` | `4` | Threads per gunicorn worker |
+| `GUNICORN_THREADS` | `8` | Threads per gunicorn worker |
+| `GUNICORN_TIMEOUT` | `60` | Gunicorn worker timeout in seconds |
+| `GF_ADMIN_USER` | `admin` | Grafana admin user |
+| `GF_ADMIN_PASSWORD` | — (required) | Grafana admin password (Grafana fails to start if unset) |
+| `RATELIMIT_ENABLED` | `true` | Set to `false` to disable Redis rate limiting (e.g. load tests) |
+| `KAFKA_SYNC_FALLBACK` | — (unset) | Set to `1` for synchronous DB writes bypassing Kafka (tests / local dev) |
+| `CHAOS_ENABLED` | `false` | Set to `true` to enable the `GET /fail` kill-switch (chaos testing only) |
+| `CHAOS_TOKEN` | — (empty) | When set, `/fail` requires a matching `X-Chaos-Token` header |
+| `ALERT_MONITOR_ENABLED` | `false` | Set to `true` to run the Discord `/health` monitor thread |
+| `DB_MAX_CONNECTIONS` | `20` | App Postgres connection pool size |
+| `DB_MAX_CONNECTIONS_LOGS` | `10` | Request-log consumer pool size |
+| `DB_MAX_CONNECTIONS_EVENTS` | `10` | URL-event consumer pool size |
+| `DB_MAX_CONNECTIONS_CREATES` | `5` | URL-create consumer pool size |
 
 ---
 
