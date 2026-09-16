@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: quadrourl
+resources:
+  - namespace.yaml
+  - consumers.yaml
+  - scaledobjects.yaml
+configMapGenerator:
+  - name: consumer-config
+    literals:
+      - KAFKA_BROKER=kafka.quadrourl.svc.cluster.local:9092
+      - KAFKA_GROUP=request-log-writer
+      - KAFKA_TOPIC_REQUEST_LOGS=request-logs
+      - KAFKA_TOPIC_URL_EVENTS=url-events
+      - KAFKA_TOPIC_URL_CREATES=url-creates
+      - DATABASE_HOST=postgres-writer.quadrourl.svc.cluster.local
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=hackathon_db
+      - REDIS_URL=redis://redis.quadrourl.svc.cluster.local:6379/0
+images:
+  # Replace with the immutable image built from this repository before applying.
+  - name: quadrourl-consumer
+    newName: example.invalid/quadrourl-consumer
+    newTag: replace-me

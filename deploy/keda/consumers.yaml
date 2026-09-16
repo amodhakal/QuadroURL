@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: request-log-consumer
+spec:
+  # Omit replicas: KEDA/HPA owns it; re-applying must not reset scaling.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: request-log-consumer
+  template:
+    metadata:
+      labels:
+        app: request-log-consumer
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: consumer
+          image: quadrourl-consumer
+          envFrom:
+            - configMapRef:
+                name: consumer-config
+            - secretRef:
+                name: consumer-database
+          env:
+            - name: CONSUMER_TYPE
+              value: logs
+            - name: DB_MAX_CONNECTIONS_LOGS
+              value: "10"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-logs.heartbeat') < 120"]
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-logs.heartbeat') < 120"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-event-consumer
+spec:
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: url-event-consumer
+  template:
+    metadata:
+      labels:
+        app: url-event-consumer
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: consumer
+          image: quadrourl-consumer
+          envFrom:
+            - configMapRef:
+                name: consumer-config
+            - secretRef:
+                name: consumer-database
+          env:
+            - name: CONSUMER_TYPE
+              value: events
+            - name: DB_MAX_CONNECTIONS_EVENTS
+              value: "10"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-events.heartbeat') < 120"]
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-events.heartbeat') < 120"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-create-consumer
+spec:
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: url-create-consumer
+  template:
+    metadata:
+      labels:
+        app: url-create-consumer
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: consumer
+          image: quadrourl-consumer
+          envFrom:
+            - configMapRef:
+                name: consumer-config
+            - secretRef:
+                name: consumer-database
+          env:
+            - name: CONSUMER_TYPE
+              value: creates
+            - name: DB_MAX_CONNECTIONS_CREATES
+              value: "5"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-creates.heartbeat') < 120"]
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec:
+              command: [python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/consumer-creates.heartbeat') < 120"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
