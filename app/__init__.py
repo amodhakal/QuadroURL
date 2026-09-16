@@ -204,62 +204,66 @@ def create_app():
     def track_metrics(response):
         if request.path in _METRICS_EXCLUDED:
             return response
-        from app.utils.request_ctx import get_client_ip, get_request_id
-
         try:
-            response.headers["X-Request-ID"] = get_request_id()
-        except Exception:
-            pass
-        start = getattr(request, "_start_time", None)
-        latency_s = time.perf_counter() - start if start is not None else 0.0
-        latency_ms = latency_s * 1000
-        # Bound cardinality: use the matched route template, not the raw
-        # path with IDs/codes (#123, #154).
-        try:
-            endpoint = (
-                request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
-            )
-        except Exception:
-            endpoint = request.endpoint or request.path
-        record_request_end(request.method, endpoint, response.status_code, latency_ms)
+            from app.utils.request_ctx import get_client_ip, get_request_id
 
-        REQUEST_COUNT.labels(
-            method=request.method, endpoint=endpoint, status=response.status_code
-        ).inc()
-        REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
-        REQUESTS_IN_PROGRESS.dec()
+            try:
+                response.headers["X-Request-ID"] = get_request_id()
+            except Exception:
+                pass
+            start = getattr(request, "_start_time", None)
+            latency_s = time.perf_counter() - start if start is not None else 0.0
+            latency_ms = latency_s * 1000
+            # Bound cardinality: use the matched route template, not the raw
+            # path with IDs/codes (#123, #154).
+            try:
+                endpoint = (
+                    request.url_rule.rule
+                    if request.url_rule
+                    else (request.endpoint or request.path)
+                )
+            except Exception:
+                endpoint = request.endpoint or request.path
+            record_request_end(request.method, endpoint, response.status_code, latency_ms)
 
-        if response.status_code >= 400:
-            ERROR_COUNT.labels(
+            REQUEST_COUNT.labels(
                 method=request.method, endpoint=endpoint, status=response.status_code
             ).inc()
+            REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
 
-        short_code = ""
-        sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
-            r"^/urls/([^/]+)/redirect$", request.path
-        )
-        if sc_match:
-            short_code = sc_match.group(1)
+            if response.status_code >= 400:
+                ERROR_COUNT.labels(
+                    method=request.method, endpoint=endpoint, status=response.status_code
+                ).inc()
 
-        client_ip = get_client_ip()
-        user_agent = request.headers.get("User-Agent", "")
-
-        try:
-            publish_log_event(
-                {
-                    "user_agent": user_agent,
-                    "client_ip": client_ip,
-                    "method": request.method,
-                    "path": request.path,
-                    "status_code": response.status_code,
-                    "latency_ms": round(latency_ms, 2),
-                    "short_code": short_code,
-                    "request_id": get_request_id(),
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
+            short_code = ""
+            sc_match = re.match(r"^/r/([^/]+)$", request.path) or re.match(
+                r"^/urls/([^/]+)/redirect$", request.path
             )
-        except Exception:
-            app.logger.exception("Failed to publish request log to Kafka")
+            if sc_match:
+                short_code = sc_match.group(1)
+
+            client_ip = get_client_ip()
+            user_agent = request.headers.get("User-Agent", "")
+
+            try:
+                publish_log_event(
+                    {
+                        "user_agent": user_agent,
+                        "client_ip": client_ip,
+                        "method": request.method,
+                        "path": request.path,
+                        "status_code": response.status_code,
+                        "latency_ms": round(latency_ms, 2),
+                        "short_code": short_code,
+                        "request_id": get_request_id(),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            except Exception:
+                app.logger.exception("Failed to publish request log to Kafka")
+        finally:
+            REQUESTS_IN_PROGRESS.dec()
 
         return response
 
