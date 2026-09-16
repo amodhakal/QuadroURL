@@ -87,7 +87,7 @@ services:
       - app-network
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports:
       - "80:80"
     volumes:
@@ -99,7 +99,7 @@ services:
       - app-network
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     ports:
       - "9090:9090"
     volumes:
@@ -111,7 +111,7 @@ services:
       - app-network
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.3.0
     ports:
       - "3001:3000"
     environment:
@@ -212,6 +212,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,time,glob; fs=glob.glob('/tmp/consumer-*.heartbeat'); assert fs and min(time.time()-os.path.getmtime(f) for f in fs) < 120, 'stale heartbeat'\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     networks:
       - app-network
@@ -240,6 +246,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,time,glob; fs=glob.glob('/tmp/consumer-*.heartbeat'); assert fs and min(time.time()-os.path.getmtime(f) for f in fs) < 120, 'stale heartbeat'\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     networks:
       - app-network
@@ -272,6 +284,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,time,glob; fs=glob.glob('/tmp/consumer-*.heartbeat'); assert fs and min(time.time()-os.path.getmtime(f) for f in fs) < 120, 'stale heartbeat'\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     networks:
       - app-network

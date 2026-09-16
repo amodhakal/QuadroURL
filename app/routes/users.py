@@ -8,6 +8,8 @@ from playhouse.shortcuts import model_to_dict
 from app.cache import (
     clear_all_users,
     clear_list_cache,
+    delete_url,
+    delete_url_by_short_code,
     delete_user,
     get_list_cache,
     get_user,
@@ -15,6 +17,7 @@ from app.cache import (
     set_user,
 )
 from app.database import db
+from app.models.url import Url
 from app.models.user import User
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
@@ -197,9 +200,19 @@ def update_user(user_id):
 def delete_user_endpoint(user_id):
     try:
         user = User.get_by_id(user_id)
-        user.delete_instance()
+        owned = list(Url.select(Url.id, Url.short_code).where(Url.user == user_id))
+        short_codes = [u.short_code for u in owned if u.short_code]
+        url_ids = [u.id for u in owned]
+        with db.atomic():
+            user.delete_instance(recursive=True)
         delete_user(user_id)
+        for url_id in url_ids:
+            delete_url(url_id)
+        for short_code in short_codes:
+            delete_url_by_short_code(short_code)
         clear_list_cache("list:users:")
+        clear_list_cache("list:urls:")
+        clear_list_cache("list:events:")
         current_app.logger.info(f"Deleted user id={user_id}")
     except User.DoesNotExist:
         current_app.logger.warning(f"User not found for delete id={user_id}")

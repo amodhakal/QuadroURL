@@ -2,6 +2,7 @@ import json
 import secrets
 import string
 import uuid
+from datetime import datetime, timezone
 
 from flask import (
     Blueprint,
@@ -30,6 +31,7 @@ from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
+    parse_expires_at,
     reject_unknown_fields,
     require_bool,
     require_int,
@@ -94,7 +96,68 @@ def is_bot_user_agent(user_agent: str) -> bool:
 def format_url(url):
     data = model_to_dict(url, recurse=False)
     data["user_id"] = data.pop("user")
+    data["expires_at"] = _expires_at_iso(data.get("expires_at"))
     return data
+
+
+def _expires_at_iso(value):
+    """Serialize ``expires_at`` as an ISO 8601 string or None (#192).
+
+    Postgres ``TIMESTAMP`` strips tz on refetch, so naive datetimes are
+    normalized to UTC (values are validated tz-aware at write time).
+    Pre-serialized strings (e.g. cache round-trips) pass through.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return value
+
+
+def _is_expired(value, now):
+    """True when an ``expires_at`` value (datetime|str|None) is at/past ``now``.
+
+    Naive datetimes/strings are treated as UTC rather than raising
+    ``TypeError`` on aware/naive comparison: PG ``TIMESTAMP`` strips tz on
+    refetch, so stored values routinely come back naive. Unparseable strings
+    fail open (not expired) with a warning — a corrupt cache entry must not
+    404 a live link.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            value = datetime.fromisoformat(text)
+        except (ValueError, TypeError):
+            current_app.logger.warning(f"Unparseable expires_at in cached URL: {value!r}")
+            return False
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value <= now
+    return False
+
+
+def _idempotency_key(data):
+    """Client-supplied idempotency key for POST /urls (#113).
+
+    The ``Idempotency-Key`` header wins over the ``request_id`` JSON field;
+    empty values are ignored (treated as absent).
+    """
+    header_key = request.headers.get("Idempotency-Key")
+    if isinstance(header_key, str) and header_key.strip():
+        return header_key.strip()
+    body_key = data.get("request_id") if isinstance(data, dict) else None
+    if isinstance(body_key, str) and body_key.strip():
+        return body_key.strip()
+    return None
 
 
 @urls_bp.route("/urls", methods=["POST"])
@@ -116,11 +179,30 @@ def create_url():
 
     require_str(title, "title must be a string", "title must be a string")
 
+    expires_at = parse_expires_at(data.get("expires_at"))
+
     if get_user(user_id) is None:
         current_app.logger.warning("User not found")
         abort(400, description="User not found")
 
     request_id = str(uuid.uuid4())
+
+    idempotency_key = _idempotency_key(data)
+    if idempotency_key is not None:
+        existing = Url.get_or_none(Url.request_id == idempotency_key)
+        if existing is not None:
+            # Client retry of an already-created URL: return the original
+            # row without publishing again (#113).
+            replay = format_url(existing)
+            set_url(existing.id, replay)
+            set_url_by_short_code(existing.short_code, replay)
+            clear_list_cache("list:urls:")
+            clear_list_cache("list:events:")
+            current_app.logger.info(
+                f"Idempotent replay: request_id={idempotency_key} url_id={existing.id}"
+            )
+            return jsonify(replay), 200
+        request_id = idempotency_key
 
     try:
         created = publish_url_create(
@@ -129,6 +211,7 @@ def create_url():
                 "user_id": user_id,
                 "original_url": original_url,
                 "title": title,
+                "expires_at": expires_at.isoformat() if expires_at is not None else None,
             }
         )
     except RuntimeError:
@@ -209,6 +292,7 @@ def get_url_status(request_id):
                 "short_code": status_data.get("short_code"),
                 "original_url": status_data.get("original_url"),
                 "title": status_data.get("title"),
+                "expires_at": status_data.get("expires_at"),
             }
         )
 
@@ -239,6 +323,7 @@ def list_urls():
         Url.original_url,
         Url.title,
         Url.is_active,
+        Url.expires_at,
         Url.created_at,
         Url.updated_at,
     )
@@ -281,6 +366,7 @@ def list_urls():
                 "original_url": u.original_url,
                 "title": u.title,
                 "is_active": u.is_active,
+                "expires_at": _expires_at_iso(u.expires_at),
                 "created_at": u.created_at.isoformat(),
                 "updated_at": u.updated_at.isoformat(),
             }
@@ -321,7 +407,7 @@ def update_url(url_id):
 
     data = require_json("Invalid JSON received for update_url")
 
-    reject_unknown_fields(data, {"title", "is_active"})
+    reject_unknown_fields(data, {"title", "is_active", "expires_at"})
 
     if "title" in data:
         require_non_empty_str(data["title"], "title must be a non-empty string")
@@ -350,6 +436,20 @@ def update_url(url_id):
             },
         )
         current_app.logger.info(f"Updated is_active for url id={url.id}")
+
+    if "expires_at" in data:
+        expires_at = parse_expires_at(data["expires_at"])
+        url.expires_at = expires_at
+        create_event(
+            url.id,
+            url.user_id,
+            "updated",
+            {
+                "field": "expires_at",
+                "new_value": expires_at.isoformat() if expires_at is not None else None,
+            },
+        )
+        current_app.logger.info(f"Updated expires_at for url id={url.id}")
 
     url.save()
     data = format_url(url)
@@ -394,6 +494,9 @@ def resolve_short_code_or_404(short_code):
         abort(404)
     if not data.get("is_active", True):
         current_app.logger.warning(f"Short code inactive: {short_code}")
+        abort(404)
+    if _is_expired(data.get("expires_at"), datetime.now(timezone.utc)):
+        current_app.logger.warning(f"Short code expired: {short_code}")
         abort(404)
     return data
 
