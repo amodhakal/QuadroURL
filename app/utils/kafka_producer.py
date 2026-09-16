@@ -14,6 +14,39 @@ _producer = None
 _delivery_ok = 0
 _delivery_failed = 0
 
+# Throttle for the opportunistic poll that drives delivery callbacks (#246).
+# _produce() already poll(0)s after each message, but librdkafka only fires
+# callbacks for completions that are ready at poll time, so counters lagged
+# until flush() at exit. _maybe_poll() drives prior completions on entry.
+_last_poll = 0.0
+
+
+def _poll_interval():
+    try:
+        return max(0.0, float(os.environ.get("KAFKA_POLL_INTERVAL_SEC", 1.0)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _maybe_poll(producer=None):
+    """Best-effort non-blocking poll, throttled to _poll_interval (#246).
+
+    No background threads: lifecycle is explicit, so callbacks are driven
+    opportunistically on the calling thread. Never raises; polling must not
+    break the produce path. Never creates the producer as a side effect.
+    """
+    global _last_poll
+    try:
+        now = time.monotonic()
+        if now - _last_poll < _poll_interval():
+            return
+        _last_poll = now
+        target = producer if producer is not None else _producer
+        if target is not None:
+            target.poll(0)
+    except Exception:
+        logger.exception("Kafka poll failed")
+
 
 def _on_delivery(err, msg):
     global _delivery_ok, _delivery_failed
@@ -25,6 +58,17 @@ def _on_delivery(err, msg):
 
 
 def delivery_stats():
+    """Return delivery-callback counters, driving callbacks first (#246).
+
+    Polls non-blocking before reading so completions surface without
+    requiring flush(). Best-effort: if the broker hasn't completed a
+    delivery yet, the counter still lags until the next poll.
+    """
+    try:
+        if _producer is not None:
+            _producer.poll(0)
+    except Exception:
+        logger.exception("Kafka poll failed")
     return {"delivered": _delivery_ok, "failed": _delivery_failed}
 
 
@@ -68,6 +112,7 @@ def _produce(topic, data, key=None):
         preserving per-entity ordering (#161).
     """
     producer = _get_producer()
+    _maybe_poll(producer)
     payload = json.dumps(data).encode("utf-8")
     key_bytes = key.encode("utf-8") if isinstance(key, str) else key
 
