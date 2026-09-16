@@ -34,7 +34,7 @@ def record_request_start():
 def record_request_end(method, path, status_code, latency_ms):
     global total_requests, total_errors, active_requests
     with _lock:
-        active_requests -= 1
+        active_requests = max(0, active_requests - 1)
         total_requests += 1
         endpoint_key = f"{method} {path}"
         traffic_by_endpoint[endpoint_key] += 1
@@ -55,25 +55,32 @@ def record_request_end(method, path, status_code, latency_ms):
 def get_metrics_snapshot():
     with _lock:
         recent = list(request_log)
+        # Copy counters under the same lock to avoid torn reads (#146).
+        _traffic = dict(traffic_by_endpoint)
+        _errors = dict(errors_by_status)
+        _total = total_requests
+        _total_errors = total_errors
+        _active = active_requests
+        _peak = peak_active_requests
 
     latencies = [r["latency_ms"] for r in recent]
-    error_entries = [r for r in recent if r["status"] >= 400]
 
     if latencies:
         latencies_sorted = sorted(latencies)
-        avg_latency = round(sum(latencies) / len(latencies), 2)
-        p50 = latencies_sorted[len(latencies_sorted) // 2]
-        p95 = latencies_sorted[int(len(latencies_sorted) * 0.95)]
-        p99 = latencies_sorted[int(len(latencies_sorted) * 0.99)]
+        n = len(latencies_sorted)
+        avg_latency = round(sum(latencies) / n, 2)
+        p50 = latencies_sorted[min(n // 2, n - 1)]
+        p95 = latencies_sorted[min(int(n * 0.95), n - 1)]
+        p99 = latencies_sorted[min(int(n * 0.99), n - 1)]
         max_latency = latencies_sorted[-1]
     else:
         avg_latency = p50 = p95 = p99 = max_latency = 0
 
     uptime = round(time.time() - start_time, 1)
-    rps = round(total_requests / uptime, 2) if uptime > 0 else 0
-    error_rate = round((total_errors / total_requests) * 100, 2) if total_requests > 0 else 0
+    rps = round(_total / uptime, 2) if uptime > 0 else 0
+    error_rate = round((_total_errors / _total) * 100, 2) if _total > 0 else 0
 
-    top_endpoints = sorted(traffic_by_endpoint.items(), key=lambda x: -x[1])[:10]
+    top_endpoints = sorted(_traffic.items(), key=lambda x: -x[1])[:10]
 
     last_20 = recent[-20:] if recent else []
 
@@ -86,18 +93,18 @@ def get_metrics_snapshot():
             "max_ms": max_latency,
         },
         "traffic": {
-            "total_requests": total_requests,
+            "total_requests": _total,
             "requests_per_second": rps,
             "top_endpoints": [{"endpoint": e, "count": c} for e, c in top_endpoints],
         },
         "errors": {
-            "total_errors": total_errors,
+            "total_errors": _total_errors,
             "error_rate_percent": error_rate,
-            "by_status": dict(errors_by_status),
+            "by_status": dict(_errors),
         },
         "saturation": {
-            "active_requests": active_requests,
-            "peak_active_requests": peak_active_requests,
+            "active_requests": _active,
+            "peak_active_requests": _peak,
         },
         "uptime_seconds": uptime,
         "recent_requests": [

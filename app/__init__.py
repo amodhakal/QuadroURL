@@ -158,7 +158,7 @@ def create_app():
     def log_request():
         if request.path == "/health":
             return
-        request._start_time = time.time()
+        request._start_time = time.perf_counter()
         record_request_start()
         REQUESTS_IN_PROGRESS.inc()
 
@@ -166,11 +166,17 @@ def create_app():
     def track_metrics(response):
         if request.path == "/health":
             return response
-        latency_s = time.time() - getattr(request, "_start_time", time.time())
+        start = getattr(request, "_start_time", None)
+        latency_s = time.perf_counter() - start if start is not None else 0.0
         latency_ms = latency_s * 1000
-        record_request_end(request.method, request.path, response.status_code, latency_ms)
+        # Bound cardinality: use the matched route template, not the raw
+        # path with IDs/codes (#123, #154).
+        try:
+            endpoint = request.url_rule.rule if request.url_rule else (request.endpoint or request.path)
+        except Exception:
+            endpoint = request.endpoint or request.path
+        record_request_end(request.method, endpoint, response.status_code, latency_ms)
 
-        endpoint = request.path
         REQUEST_COUNT.labels(method=request.method, endpoint=endpoint, status=response.status_code).inc()
         REQUEST_LATENCY.labels(method=request.method, endpoint=endpoint).observe(latency_s)
         REQUESTS_IN_PROGRESS.dec()
