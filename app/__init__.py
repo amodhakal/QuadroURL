@@ -233,6 +233,11 @@ def create_app():
         app.logger.warning(f"Bad request: {error.description}")
         return jsonify({"error": str(error.description)}), 400
 
+    @app.errorhandler(401)
+    def unauthorized(error):
+        app.logger.warning(f"Unauthorized: {error.description}")
+        return jsonify({"error": str(error.description)}), 401
+
     @app.errorhandler(404)
     def not_found(error):
         return jsonify({"error": "Not found"}), 404

@@ -18,6 +18,7 @@ from app.cache import (
 from app.database import db
 from app.models.url import Url
 from app.models.user import User
+from app.utils.auth import require_auth
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
     reject_unknown_fields,
@@ -31,6 +32,7 @@ users_bp = Blueprint("users", __name__)
 
 @users_bp.route("/users/bulk", methods=["POST"])
 @rate_limit(capacity=10, refill_rate=1.0)
+@require_auth
 def bulk_import_users():
     if not request.content_type or not request.content_type.startswith("multipart/form-data"):
         current_app.logger.warning(f"Invalid Content-Type for bulk import: {request.content_type}")
@@ -90,6 +92,7 @@ def bulk_import_users():
 
 
 @users_bp.route("/users", methods=["GET"])
+@require_auth
 def list_users():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
@@ -125,6 +128,7 @@ def list_users():
 
 
 @users_bp.route("/users/<int:user_id>", methods=["GET"])
+@require_auth
 def get_user_cached(user_id):
     cached = get_user(user_id)
     if cached is not None:
@@ -161,10 +165,18 @@ def create_user():
     result = model_to_dict(user)
     set_user(user.id, result)
     clear_list_cache("list:users:")
+    # Registration issues the caller's first bearer key inline (bootstrap:
+    # there is no key to authenticate with yet). Shown once, never stored
+    # raw (#99).
+    from app.utils.auth import issue_api_key
+
+    _, raw_key = issue_api_key(user.id)
+    result["api_key"] = raw_key
     return jsonify(result), 201
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
+@require_auth
 def update_user(user_id):
     try:
         user = User.get_by_id(user_id)
@@ -194,6 +206,7 @@ def update_user(user_id):
 
 
 @users_bp.route("/users/<int:user_id>", methods=["DELETE"])
+@require_auth
 def delete_user_endpoint(user_id):
     try:
         user = User.get_by_id(user_id)
