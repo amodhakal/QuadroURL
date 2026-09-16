@@ -178,9 +178,11 @@ def drain_url_events(buffer):
 def emit_created_events(producer, events):
     for event in events:
         try:
+            key = event.get("url_id")
             producer.produce(
                 config.KAFKA_TOPIC_URL_EVENTS,
                 value=json.dumps(event).encode("utf-8"),
+                key=str(key).encode("utf-8") if key is not None else None,
             )
         except Exception:
             logger.exception("[url-creates] Failed to publish created event")

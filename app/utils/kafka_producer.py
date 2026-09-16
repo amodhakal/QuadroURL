@@ -57,20 +57,24 @@ def get_producer():
     return _get_producer()
 
 
-def _produce(topic, data):
+def _produce(topic, data, key=None):
     """Produce a message with bounded backpressure handling.
 
     Retries when the broker buffer is full (BufferError).  If the queue stays
     full past the timeout, raises :class:`ProducerBackpressureError` so callers
     surface the stall instead of silently dropping the message.
+
+    :param key: Kafka partition key — same key lands on the same partition,
+        preserving per-entity ordering (#161).
     """
     producer = _get_producer()
     payload = json.dumps(data).encode("utf-8")
+    key_bytes = key.encode("utf-8") if isinstance(key, str) else key
 
     deadline = time.time() + float(os.environ.get("KAFKA_PRODUCE_TIMEOUT", 5.0))
     while True:
         try:
-            producer.produce(topic, value=payload, callback=_on_delivery)
+            producer.produce(topic, value=payload, key=key_bytes, callback=_on_delivery)
             producer.poll(0)
             return
         except BufferError:
@@ -108,7 +112,8 @@ def publish_log_event(data: dict):
             short_code=data.get("short_code", ""),
         )
         return
-    _produce(topic, data)
+    # Key by short code (or path) so one link's logs stay ordered (#161).
+    _produce(topic, data, key=data.get("short_code") or data.get("path"))
 
 
 def publish_event(data: dict):
@@ -126,14 +131,17 @@ def publish_event(data: dict):
             details=details,
         )
         return
-    _produce(topic, data)
+    # Key by URL so one link's events stay ordered on one partition (#161).
+    url_id = data.get("url_id")
+    _produce(topic, data, key=str(url_id) if url_id is not None else None)
 
 
 def publish_url_create(data: dict):
     topic = os.environ.get("KAFKA_TOPIC_URL_CREATES", "url-creates")
     if os.environ.get("KAFKA_SYNC_FALLBACK") == "1":
         return _create_url_sync(data)
-    _produce(topic, data)
+    # Key by request_id so retries of the same creation stay ordered (#161).
+    _produce(topic, data, key=data.get("request_id"))
     return None
 
 
