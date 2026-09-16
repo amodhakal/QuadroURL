@@ -8,16 +8,7 @@ from datetime import datetime, timezone
 
 import redis
 from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
-from peewee import (
-    AutoField,
-    CharField,
-    DateTimeField,
-    FloatField,
-    IntegerField,
-    Model,
-    TextField,
-)
-from playhouse.pool import PooledPostgresqlDatabase
+from models import Event, RequestLog, db
 
 import config
 from url_create_handler import handle_url_create_batch
@@ -26,9 +17,8 @@ from url_create_handler import handle_url_create_batch
 class ConsumerJsonFormatter(logging.Formatter):
     """JSON formatter emitting the same base keys as the app's JsonFormatter.
 
-    NOTE: the consumer container cannot import the ``app`` package
-    (``consumer/Dockerfile`` does ``COPY . .`` inside ``consumer/`` with
-    ``CMD ["python", "app.py"]``), so this is a local copy of the same
+    The consumer image packages the worker and shared schema, not the Flask
+    ``app`` package, so this is a local copy of the same
     ``timestamp``/``level``/``message``/``logger`` shape rather than an
     import. The consumer never runs inside a Flask request context, so
     the request-scoped keys (``method``/``path``/``remote_addr``/
@@ -61,54 +51,6 @@ def setup_consumer_logging():
 
 
 logger = setup_consumer_logging()
-
-_MAX_CONNECTIONS = {
-    "logs": config.DB_MAX_CONNECTIONS_LOGS,
-    "events": config.DB_MAX_CONNECTIONS_EVENTS,
-    "creates": config.DB_MAX_CONNECTIONS_CREATES,
-}
-
-db = PooledPostgresqlDatabase(
-    config.DATABASE_NAME,
-    host=config.DATABASE_HOST,
-    port=config.DATABASE_PORT,
-    user=config.DATABASE_USER,
-    password=config.DATABASE_PASSWORD,
-    max_connections=_MAX_CONNECTIONS.get(config.CONSUMER_TYPE, 10),
-    stale_timeout=300,
-    connect_timeout=5,
-)
-
-
-class RequestLog(Model):
-    id = AutoField()
-    url_id = IntegerField(null=True)
-    user_agent = TextField(default="")
-    client_ip = CharField(default="")
-    method = CharField()
-    path = CharField()
-    status_code = IntegerField()
-    latency_ms = FloatField()
-    short_code = CharField(default="")
-    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
-
-    class Meta:
-        database = db
-        table_name = "requestlog"
-
-
-class Event(Model):
-    id = AutoField()
-    url_id = IntegerField()
-    user_id = IntegerField()
-    event_type = CharField()
-    timestamp = DateTimeField(default=lambda: datetime.now(timezone.utc))
-    details = TextField()
-
-    class Meta:
-        database = db
-        table_name = "event"
-
 
 running = True
 

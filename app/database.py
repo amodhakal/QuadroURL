@@ -1,15 +1,13 @@
 import os
 
 from flask import request
-from peewee import DatabaseProxy, Model
+from peewee import DatabaseProxy
 from playhouse.pool import PooledPostgresqlDatabase
+from shared.schema import create_models
 
 db = DatabaseProxy()
-
-
-class BaseModel(Model):
-    class Meta:
-        database = db
+models = create_models(db)
+BaseModel = models.BaseModel
 
 
 def init_db(app):

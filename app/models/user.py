@@ -1,12 +1,5 @@
-from datetime import datetime, timezone
+"""Compatibility import for the canonical shared User model."""
 
-from peewee import AutoField, CharField, DateTimeField
+from app.database import models
 
-from app.database import BaseModel
-
-
-class User(BaseModel):
-    id = AutoField()
-    username = CharField(unique=True)
-    email = CharField(unique=True)
-    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+User = models.User

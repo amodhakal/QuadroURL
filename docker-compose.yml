@@ -190,8 +190,8 @@ services:
 
   request-log-consumer:
     build:
-      context: ./consumer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: consumer/Dockerfile
     environment:
       CONSUMER_TYPE: logs
       KAFKA_BROKER: kafka:9092
@@ -224,8 +224,8 @@ services:
 
   url-event-consumer:
     build:
-      context: ./consumer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: consumer/Dockerfile
     environment:
       CONSUMER_TYPE: events
       KAFKA_BROKER: kafka:9092
@@ -258,8 +258,8 @@ services:
 
   url-create-consumer:
     build:
-      context: ./consumer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: consumer/Dockerfile
     environment:
       CONSUMER_TYPE: creates
       KAFKA_BROKER: kafka:9092
