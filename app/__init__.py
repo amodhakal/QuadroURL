@@ -21,6 +21,7 @@ from app.routes.prometheus import (
     REQUEST_LATENCY,
     REQUESTS_IN_PROGRESS,
 )
+from app.utils.kafka_producer import publish_log_event
 from app.utils.logger import JsonFormatter, ListHandler, configure_logging
 
 
@@ -262,24 +263,9 @@ def create_app():
     def service_unavailable(error):
         return jsonify({"error": str(error.description)}), 503
 
-    # Background workers are opt-in and started once (#128, #129):
-    # - the Discord monitor cannot detect a real crash from inside the
-    #   same process, so it only runs when ALERT_MONITOR_ENABLED=true;
-    # - the sampler is guarded internally against duplicate threads;
-    # - atexit flush is registered once per process.
-    from app.utils.alerts import start_alerting
-    from app.utils.kafka_producer import flush_producer, publish_log_event
-
-    if os.environ.get("ALERT_MONITOR_ENABLED", "false").lower() == "true":
-        app_url = os.environ.get("APP_URL", "http://127.0.0.1:5000")
-        start_alerting(app_url=app_url, interval=60)
-
-    start_system_metrics_sampler()
-
-    import atexit
-
-    if not getattr(create_app, "_atexit_registered", False):
-        atexit.register(flush_producer)
-        create_app._atexit_registered = True
+    # Background workers are NOT started here (#128, #129, #148):
+    # call app.lifecycle.start_background_workers(app) explicitly from
+    # the entry point (run.py) so importing/building the app in tests
+    # never spawns threads or registers atexit handlers.
 
     return app
