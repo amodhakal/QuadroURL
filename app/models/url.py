@@ -18,7 +18,7 @@ class Url(BaseModel):
     short_code = CharField(unique=True)
     original_url = CharField()
     title = CharField()
-    is_active = BooleanField()
+    is_active = BooleanField(default=True)
     # Soft-expiry for short links (#192). NULL means "never expires"; a set
     # value is compared against now (UTC) on the redirect path, where expired
     # links resolve as missing (404), mirroring inactive URLs. Optional at
