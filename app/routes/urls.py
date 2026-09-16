@@ -321,6 +321,21 @@ def get_url_status(request_id):
     return jsonify({"status": "pending"})
 
 
+def _require_int_query_param(name):
+    """Parse an integer query param or abort 400 (#242).
+
+    ``request.args.get(name, type=int)`` yields ``None`` on garbage input,
+    which would otherwise produce an ``IS NULL`` comparison and silently
+    return an empty list. Treat present-but-unparseable as a client error,
+    following the ``is_active`` 400 pattern.
+    """
+    value = request.args.get(name, type=int)
+    if value is None:
+        current_app.logger.warning(f"Invalid {name} query param: {request.args.get(name)!r}")
+        abort(400, description=f"{name} must be an integer")
+    return value
+
+
 @urls_bp.route("/urls", methods=["GET"])
 def list_urls():
     offset = request.args.get("offset", 0, type=int)
@@ -351,10 +366,10 @@ def list_urls():
     )
 
     if "id" in request.args:
-        query = query.where(Url.id == request.args.get("id", type=int))
+        query = query.where(Url.id == _require_int_query_param("id"))
 
     if "user_id" in request.args:
-        query = query.where(Url.user_id == request.args.get("user_id", type=int))
+        query = query.where(Url.user_id == _require_int_query_param("user_id"))
 
     if "short_code" in request.args:
         query = query.where(Url.short_code == request.args["short_code"])
@@ -365,11 +380,14 @@ def list_urls():
     if "is_active" in request.args:
         val = request.args["is_active"].lower()
         if val not in ("true", "false"):
+            current_app.logger.warning(
+                f"Invalid is_active query param: {request.args['is_active']!r}"
+            )
             abort(400, description="is_active must be 'true' or 'false'")
         query = query.where(Url.is_active == (val == "true"))
 
     if "before_id" in request.args:
-        query = query.where(Url.id < request.args.get("before_id", type=int))
+        query = query.where(Url.id < _require_int_query_param("before_id"))
         query = query.order_by(Url.id.desc()).limit(size)
         urls = list(query)
     else:
