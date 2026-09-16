@@ -16,6 +16,7 @@ from app.cache import (
 )
 from app.database import db
 from app.models.user import User
+from app.utils.ratelimit import rate_limit
 
 users_bp = Blueprint("users", __name__)
 
@@ -23,6 +24,7 @@ DATA_DIR = os.path.join("./data")
 
 
 @users_bp.route("/users/bulk", methods=["POST"])
+@rate_limit(capacity=10, refill_rate=1.0)
 def bulk_import_users():
     if not request.content_type or not request.content_type.startswith(
         "multipart/form-data"
@@ -134,6 +136,7 @@ def get_user_cached(user_id):
 
 
 @users_bp.route("/users", methods=["POST"])
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_user():
     data = request.get_json(silent=True)
     if not data:

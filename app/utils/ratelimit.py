@@ -56,7 +56,11 @@ def default_key_func():
 def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600):
     """
     Distributed Token Bucket Rate Limiting decorator using Redis Lua script.
-    
+
+    Generous by default and fail-open: disabled entirely with
+    RATELIMIT_ENABLED=false (e.g. load tests) and bypassed under
+    app TESTING so the suite never 429s itself.
+
     :param capacity: Maximum tokens in bucket (max burst)
     :param refill_rate: Tokens added per second
     :param key_func: Callable that returns a unique string identifier for the rate limit bucket
@@ -65,6 +69,18 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
+            import os as _os
+
+            if _os.environ.get("RATELIMIT_ENABLED", "true").lower() != "true":
+                return f(*args, **kwargs)
+            try:
+                from flask import current_app as _ca, has_app_context as _hac
+
+                if _hac() and _ca.config.get("TESTING"):
+                    return f(*args, **kwargs)
+            except Exception:
+                pass
+
             client = get_l2()
             if client is None:
                 # Fail open if Redis is unavailable

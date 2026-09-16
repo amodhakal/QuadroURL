@@ -28,6 +28,7 @@ from app.cache import (
 from app.models.url import Url
 from app.utils.events import create_event_async as create_event
 from app.utils.kafka_producer import publish_url_create
+from app.utils.ratelimit import rate_limit
 
 
 urls_bp = Blueprint("urls", __name__)
@@ -65,6 +66,7 @@ def format_url(url):
 
 
 @urls_bp.route("/urls", methods=["POST"])
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_url():
     data = request.get_json(silent=True)
 
@@ -362,6 +364,7 @@ def delete_url_endpoint(url_id):
 
 
 @urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])
+@rate_limit(capacity=2000, refill_rate=200.0)
 def redirect_short_code(short_code):
     data = get_url_by_short_code(short_code)
     if data is None:
@@ -386,6 +389,7 @@ def redirect_short_code(short_code):
 
 
 @urls_bp.route("/r/<short_code>", methods=["GET"])
+@rate_limit(capacity=2000, refill_rate=200.0)
 def redirect_short_code_legacy(short_code):
     data = get_url_by_short_code(short_code)
     if data is None:

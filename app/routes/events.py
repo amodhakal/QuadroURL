@@ -11,6 +11,7 @@ from app.cache import (
     set_list_cache,
 )
 from app.models.event import Event
+from app.utils.ratelimit import rate_limit
 
 
 events_bp = Blueprint("events", __name__)
@@ -91,6 +92,7 @@ def list_events():
 
 
 @events_bp.route("/events", methods=["POST"])
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_event():
     data = request.get_json(silent=True)
     if not data:
