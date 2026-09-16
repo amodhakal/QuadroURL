@@ -1,6 +1,26 @@
 # docker compose up --build
 
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+    command: ["uv", "run", "--no-sync", "python", "-m", "migrations_runner", "upgrade"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - app-network
+
   app:
     build:
       context: .
@@ -16,6 +36,8 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - KAFKA_BROKER=kafka:9092
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

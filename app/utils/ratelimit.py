@@ -1,7 +1,8 @@
 import functools
 import logging
 import time
-from flask import jsonify, request
+import math
+from flask import g, jsonify, request, make_response
 from app.cache import get_l2
 
 logger = logging.getLogger("quadroPE.ratelimit")
@@ -54,8 +55,12 @@ def get_script(client):
 def default_key_func():
     from app.utils.request_ctx import get_client_ip
 
-    ip = get_client_ip()
-    return f"{ip}:{request.endpoint or request.path}"
+    actor = (
+        f"user:{g.current_user_id}" if hasattr(g, "current_user_id") else f"ip:{get_client_ip()}"
+    )
+    # Aliases share one budget; neither changing IDs nor API version resets it.
+    endpoint = (request.endpoint or "unmatched").replace("_v1.", ".")
+    return f"{actor}:{endpoint}"
 
 
 def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600):
@@ -82,12 +87,22 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
             try:
                 from flask import current_app as _ca, has_app_context as _hac
 
-                if _hac() and _ca.config.get("TESTING"):
-                    return f(*args, **kwargs)
+                bypass = (
+                    _hac()
+                    and _ca.config.get("TESTING")
+                    and not _ca.config.get("RATELIMIT_IN_TESTS")
+                )
             except Exception:
-                pass
+                bypass = False
+            # Never catch exceptions from the wrapped handler and invoke it twice.
+            if bypass:
+                return f(*args, **kwargs)
 
-            client = get_l2()
+            try:
+                client = get_l2()
+            except Exception:
+                logger.exception("Rate limiter connection unavailable")
+                return f(*args, **kwargs)
             if client is None:
                 # Fail open if Redis is unavailable
                 return f(*args, **kwargs)
@@ -112,7 +127,7 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
             retry_after = 0
             if not allowed and refill_rate > 0:
                 deficit = 1 - remaining
-                retry_after = max(1, int(deficit / refill_rate))
+                retry_after = max(1, math.ceil(deficit / refill_rate))
 
             headers = {
                 "X-RateLimit-Limit": str(capacity),
@@ -127,9 +142,8 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
                 response.headers["Retry-After"] = str(retry_after)
                 return response
 
-            response = f(*args, **kwargs)
-            if hasattr(response, "headers"):
-                response.headers.update(headers)
+            response = make_response(f(*args, **kwargs))
+            response.headers.update(headers)
             return response
 
         return wrapper

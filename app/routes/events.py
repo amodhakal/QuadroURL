@@ -6,20 +6,16 @@ from playhouse.shortcuts import model_to_dict
 from app.cache import (
     clear_list_cache,
     get_list_cache,
-    get_url,
     get_user,
     set_list_cache,
 )
 from app.models.event import Event
 from app.utils.ratelimit import rate_limit
-from app.utils.auth import require_auth
-from app.utils.validation import (
-    require_dict,
-    require_int,
-    require_json,
-    require_str,
-    validate_offset_params,
-)
+from app.utils.auth import require_auth, require_owner, scope_query
+from app.models.url import Url
+from flask import g
+from app.utils.schemas import EventCreate, EventQuery, parse_body, parse_query
+from app.utils.pagination import bounds, cache_key as list_cache_key, paginate, envelope
 
 
 events_bp = Blueprint("events", __name__)
@@ -52,16 +48,11 @@ def _require_int_query_param(name):
 @events_bp.route("/events", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def list_events():
-    offset = request.args.get("offset", 0, type=int)
-    size = request.args.get("size", 20, type=int)
-    offset, size = validate_offset_params(offset, size)
-
-    key_parts = [f"offset={offset}", f"size={size}"]
-    for name in ("url_id", "user_id", "event_type", "before_id"):
-        if name in request.args:
-            key_parts.append(f"{name}={request.args[name][:128]}")
-    cache_key = "list:events:" + "&".join(key_parts)
+    params = parse_query(EventQuery)
+    bounds(params)
+    cache_key = list_cache_key("events", params)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
@@ -75,20 +66,12 @@ def list_events():
         Event.details,
     )
 
-    if "url_id" in request.args:
-        query = query.where(Event.url == _require_int_query_param("url_id"))
-    if "user_id" in request.args:
-        query = query.where(Event.user == _require_int_query_param("user_id"))
-    if "event_type" in request.args:
-        query = query.where(Event.event_type == request.args["event_type"])
-
-    if "before_id" in request.args:
-        query = query.where(Event.id < _require_int_query_param("before_id"))
-        query = query.order_by(Event.id.desc()).limit(size)
-        rows = list(query)
-    else:
-        query = query.order_by(Event.id).limit(size).offset(offset)
-        rows = list(query)
+    query = scope_query(query, Event.user)
+    for name in ("url_id", "user_id", "event_type"):
+        value = getattr(params, name)
+        if value is not None:
+            query = query.where(getattr(Event, name) == value)
+    rows, has_more = paginate(query, Event.id, params)
 
     result = []
     for e in rows:
@@ -107,30 +90,29 @@ def list_events():
                 "details": details,
             }
         )
+    result = envelope(result, params, has_more, result)
     set_list_cache(cache_key, result)
     return jsonify(result)
 
 
 @events_bp.route("/events", methods=["POST"])
-@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_event():
-    data = require_json("Invalid JSON received for create_event")
+    data = parse_body(EventCreate)
 
     url_id = data.get("url_id")
-    user_id = data.get("user_id")
+    user_id = data.get("user_id", g.current_user_id)
+    require_owner(user_id)
     event_type = data.get("event_type")
     details = data.get("details", {})
 
-    require_dict(details, "details must be an object", "details must be an object")
-
-    require_int(url_id, "url_id must be an integer", "url_id must be an integer")
-    require_int(user_id, "user_id must be an integer", "user_id must be an integer")
-    require_str(event_type, "event_type must be a string", "event_type must be a string")
-
-    if get_url(url_id) is None:
-        current_app.logger.warning("URL not found")
-        abort(400, description="URL not found")
+    url = Url.get_or_none(Url.id == url_id)
+    if url is None:
+        abort(404)
+    require_owner(url.user_id)
+    if url.user_id != user_id:
+        abort(400, description="Event user must own the URL")
 
     if get_user(user_id) is None:
         current_app.logger.warning("User not found")
