@@ -14,7 +14,7 @@ _atexit_registered = False
 
 
 def start_background_workers(app=None):
-    """Start alert monitor, metrics sampler, and producer flush (#128, #129).
+    """Start alert monitor, metrics sampler, producer flush, cache bus (#128, #129, #118).
 
     - the Discord monitor cannot detect a real crash from inside the
       same process, so it only runs when ALERT_MONITOR_ENABLED=true;
@@ -23,6 +23,7 @@ def start_background_workers(app=None):
     Idempotent: safe to call more than once (duplicate-start guards).
     """
     from app import start_system_metrics_sampler
+    from app.cache import start_invalidation_listener
     from app.utils.alerts import start_alerting
     from app.utils.kafka_producer import flush_producer
 
@@ -31,6 +32,8 @@ def start_background_workers(app=None):
         start_alerting(app_url=app_url, interval=60)
 
     start_system_metrics_sampler()
+
+    start_invalidation_listener()
 
     global _atexit_registered
     if not _atexit_registered:
