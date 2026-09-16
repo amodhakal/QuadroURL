@@ -24,7 +24,7 @@ def require_json(log_message):
     ``"Invalid JSON received for create_user"``) emitted before aborting.
     """
     data = request.get_json(silent=True)
-    if not data:
+    if not data or not isinstance(data, dict):
         current_app.logger.warning(log_message)
         abort(400, description="Invalid JSON")
     return data
