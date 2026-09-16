@@ -12,6 +12,8 @@ subclass of ``int``). That preserves the routes' long-standing semantics:
 ``tests/test_validation.py``.
 """
 
+from datetime import datetime, timezone
+
 from flask import abort, current_app, request
 
 
@@ -102,3 +104,30 @@ def reject_unknown_fields(data, allowed):
     if unknown:
         abort(400, description=f"Unknown fields: {sorted(unknown)}")
     return data
+
+
+def parse_expires_at(value):
+    """Validate an optional ``expires_at`` ISO 8601 value (#192, #134).
+
+    Returns an aware ``datetime`` when ``value`` is a future-dated string, or
+    ``None`` when ``value`` is ``None`` (absent/null means "never expires").
+    Aborts 400 on non-string input, unparseable input, timezone-naive input
+    (callers must be explicit — naive values are rejected rather than
+    silently assumed UTC), or non-future dates.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        abort(400, description="expires_at must be an ISO 8601 datetime string")
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        abort(400, description="expires_at must be an ISO 8601 datetime string")
+    if parsed.tzinfo is None:
+        abort(400, description="expires_at must include timezone info")
+    if parsed <= datetime.now(timezone.utc):
+        abort(400, description="expires_at must be in the future")
+    return parsed

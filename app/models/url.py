@@ -19,6 +19,11 @@ class Url(BaseModel):
     original_url = CharField()
     title = CharField()
     is_active = BooleanField()
+    # Soft-expiry for short links (#192). NULL means "never expires"; a set
+    # value is compared against now (UTC) on the redirect path, where expired
+    # links resolve as missing (404), mirroring inactive URLs. Optional at
+    # creation (#134 rejects past values); NULL clears it on update.
+    expires_at = DateTimeField(null=True, default=None)
     # Client idempotency key for POST /urls (#113). Nullable so pre-existing
     # rows stay valid; unique so each key maps to exactly one row. Postgres
     # treats NULLs as distinct, so old rows never clash.

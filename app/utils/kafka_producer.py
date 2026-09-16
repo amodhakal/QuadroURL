@@ -96,6 +96,46 @@ def _sync_write(model, **kwargs):
         return model.create(**kwargs)
 
 
+def _coerce_expires_at(value):
+    """Tolerant ``expires_at`` coercion for the sync-fallback path (#192).
+
+    The route layer already ran :func:`parse_expires_at` validation, so this
+    never aborts: unparseable input yields ``None``. Naive values are assumed
+    UTC (PG ``TIMESTAMP`` is tz-naive). Kept local (not imported from
+    ``app.utils.validation``) to mirror the standalone consumer, which cannot
+    import ``app``.
+    """
+    from datetime import datetime, timezone
+
+    if value is None or not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _expires_at_iso(value):
+    """Serialize a stored ``expires_at`` as ISO string or None (#192)."""
+    from datetime import datetime, timezone
+
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return None
+
+
 def publish_log_event(data: dict):
     topic = os.environ.get("KAFKA_TOPIC_REQUEST_LOGS", "request-logs")
     if os.environ.get("KAFKA_SYNC_FALLBACK") == "1":
@@ -162,6 +202,7 @@ def _create_url_sync(data):
     original_url = data.get("original_url")
     title = data.get("title")
     request_id = data.get("request_id")
+    expires_at = _coerce_expires_at(data.get("expires_at"))
 
     db.connect(reuse_if_open=True)
     url = None
@@ -169,14 +210,17 @@ def _create_url_sync(data):
     for _ in range(5):
         short_code = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(6))
         try:
-            url = Url.create(
-                user_id=user_id,
-                short_code=short_code,
-                original_url=original_url,
-                title=title,
-                is_active=True,
-                request_id=request_id,
-            )
+            create_kwargs = {
+                "user_id": user_id,
+                "short_code": short_code,
+                "original_url": original_url,
+                "title": title,
+                "is_active": True,
+                "request_id": request_id,
+            }
+            if expires_at is not None:
+                create_kwargs["expires_at"] = expires_at
+            url = Url.create(**create_kwargs)
             break
         except IntegrityError:
             # A request_id clash means this idempotency key already stored a
@@ -198,6 +242,10 @@ def _create_url_sync(data):
 
     result = model_to_dict(url, recurse=False)
     result["user_id"] = result.pop("user")
+    # Serialize from the stored row (not the request): idempotent replays of
+    # the same key must echo the original expiry (#113). PG TIMESTAMP strips
+    # tz on refetch, so naive values are normalized back to UTC.
+    result["expires_at"] = _expires_at_iso(getattr(url, "expires_at", None))
     set_url(url.id, result)
     set_url_by_short_code(url.short_code, result)
 

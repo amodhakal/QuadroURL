@@ -28,6 +28,9 @@ class Url(Model):
     original_url = CharField()
     title = CharField()
     is_active = BooleanField(default=True)
+    # Soft-expiry, mirrors app/models/url.py (#192). NULL = never expires;
+    # expired links resolve as missing (404) on the redirect path.
+    expires_at = DateTimeField(null=True, default=None)
     # Idempotency key written by producers (#113). Mirrors app/models/url.py;
     # nullable for rows created before the column existed.
     request_id = CharField(null=True, unique=True)
@@ -49,6 +52,42 @@ def _validate(data):
     original_url = data.get("original_url")
     title = data.get("title")
     return request_id, user_id, original_url, title
+
+
+def _parse_expires_at(value):
+    """Tolerant ``expires_at`` coercion for queue payloads (#192).
+
+    Returns an aware datetime, or None when absent/unparseable. Naive values
+    are assumed UTC (storage is tz-naive TIMESTAMP). Never raises: invalid
+    input yields None so one bad message cannot poison the batch. The API
+    layer already rejects naive/past input, so this only guards malformed
+    queue payloads. Standalone copy — the consumer cannot import ``app``.
+    """
+    if value is None or not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _expires_at_iso(value):
+    """Serialize a stored ``expires_at`` as ISO string or None (#192)."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return None
 
 
 def handle_url_create_batch(messages, db, redis_client):
@@ -85,6 +124,7 @@ def handle_url_create_batch(messages, db, redis_client):
 
                 url = None
                 deduplicated = False
+                expires_at = _parse_expires_at(data.get("expires_at"))
                 for attempt in range(5):
                     short_code = generate_short_code()
                     try:
@@ -93,14 +133,17 @@ def handle_url_create_batch(messages, db, redis_client):
                         # and the request_id lookup below needs a usable
                         # transaction (#113).
                         with db.savepoint():
-                            url = Url.create(
-                                user_id=user_id,
-                                short_code=short_code,
-                                original_url=original_url,
-                                title=title,
-                                is_active=True,
-                                request_id=request_id,
-                            )
+                            create_kwargs = {
+                                "user_id": user_id,
+                                "short_code": short_code,
+                                "original_url": original_url,
+                                "title": title,
+                                "is_active": True,
+                                "request_id": request_id,
+                            }
+                            if expires_at is not None:
+                                create_kwargs["expires_at"] = expires_at
+                            url = Url.create(**create_kwargs)
                         break
                     except IntegrityError:
                         # Request-id clash = redelivered retry of an
@@ -141,6 +184,7 @@ def handle_url_create_batch(messages, db, redis_client):
                             "short_code": url.short_code,
                             "original_url": url.original_url,
                             "title": url.title,
+                            "expires_at": _expires_at_iso(getattr(url, "expires_at", None)),
                         },
                     )
                 )
