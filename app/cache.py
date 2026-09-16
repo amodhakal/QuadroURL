@@ -150,6 +150,12 @@ def _l1_clear(pattern):
 
 
 def get_l2():
+    """Return the shared Redis client, or None when Redis is unavailable.
+
+    Fail-open: callers treat None as a cache miss and fall through to the
+    database. A failed Redis stays sidelined for a short cooldown so a
+    restart recovers without an app restart (see #117).
+    """
     global _l2, _l2_unavailable, _l2_unavailable_since
     if _l2_unavailable:
         # Retry after cooldown so a Redis restart recovers automatically.
@@ -183,6 +189,10 @@ def _note_l2_failure():
 
 
 def _l2_safe(fn):
+    """Run *fn* against L2, returning None on any Redis error.
+
+    Fail-open: read failures degrade to a database fetch by the caller.
+    """
     try:
         client = get_l2()
         if client is not None:
@@ -193,6 +203,10 @@ def _l2_safe(fn):
 
 
 def _l2_fire_and_forget(fn):
+    """Best-effort async L2 write.
+
+    Fail-open: write failures are swallowed; L1 remains authoritative.
+    """
     try:
         _executor.submit(lambda: _l2_safe(fn))
     except Exception:
