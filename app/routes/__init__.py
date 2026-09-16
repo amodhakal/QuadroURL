@@ -9,7 +9,9 @@ def register_routes(app):
     from app.routes.dashboard import dashboard_bp
     from app.routes.prometheus import prometheus_bp
 
-    for blueprint in (users_bp, urls_bp, events_bp, auth_bp):
+    from app.routes.exports import exports_bp
+
+    for blueprint in (users_bp, urls_bp, events_bp, auth_bp, exports_bp):
         app.register_blueprint(blueprint)
         app.register_blueprint(blueprint, url_prefix="/api/v1", name=f"{blueprint.name}_v1")
 
