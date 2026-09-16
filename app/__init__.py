@@ -307,6 +307,18 @@ def create_app():
     @app.errorhandler(500)
     def internal_server_error(error):
         app.logger.exception("Internal server error")
+        # Intentional abort(500, description=...) messages are static and
+        # safe to surface (e.g. short-code exhaustion). Anything else —
+        # including wrapped unhandled exceptions — gets a generic message
+        # so internals never leak (#104).
+        from werkzeug.exceptions import HTTPException, InternalServerError
+
+        if (
+            isinstance(error, HTTPException)
+            and error.description
+            and error.description != InternalServerError.description
+        ):
+            return jsonify({"error": error.description}), 500
         return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(503)

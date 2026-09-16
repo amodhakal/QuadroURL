@@ -123,12 +123,18 @@ def create_url():
 
     request_id = str(uuid.uuid4())
 
-    created = publish_url_create({
-        "request_id": request_id,
-        "user_id": user_id,
-        "original_url": original_url,
-        "title": title,
-    })
+    try:
+        created = publish_url_create({
+            "request_id": request_id,
+            "user_id": user_id,
+            "original_url": original_url,
+            "title": title,
+        })
+    except RuntimeError:
+        # Short-code retries exhausted (sync fallback). Static message —
+        # safe to surface via the 500 handler's intentional-message path.
+        current_app.logger.exception("Short-code generation exhausted")
+        abort(500, description="Failed to generate unique short code")
 
     if created is not None:
         current_app.logger.info(

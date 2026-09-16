@@ -27,10 +27,14 @@ def app():
 @pytest.fixture(autouse=True)
 def clean_tables(app):
     """Wipe all rows before each test so tests are isolated."""
-    from app import cache
+    from app import _kafka_check_cache, cache
     from app.utils.events import flush_events
     flush_events()
     cache._l1.clear()
+    # Reset the cached /ready Kafka probe so one test's result can't leak
+    # into the next within the 10s TTL.
+    _kafka_check_cache["result"] = None
+    _kafka_check_cache["at"] = 0.0
     with app.app_context():
         db.execute_sql("DELETE FROM event")
         db.execute_sql("DELETE FROM url")
