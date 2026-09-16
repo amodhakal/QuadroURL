@@ -18,4 +18,11 @@ ENV GUNICORN_TIMEOUT=60
 
 EXPOSE 8000
 
+RUN groupadd -r appuser && useradd -r -g appuser -m appuser \
+    && chown -R appuser:appuser /app
+
+ENV HOME=/home/appuser
+
+USER appuser
+
 CMD ["sh", "-c", "uv run gunicorn --bind 0.0.0.0:8000 --workers $GUNICORN_WORKERS --threads $GUNICORN_THREADS --worker-class gthread --timeout $GUNICORN_TIMEOUT run:app"]
