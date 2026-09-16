@@ -32,6 +32,27 @@ from app.utils.kafka_producer import publish_url_create
 
 urls_bp = Blueprint("urls", __name__)
 
+MAX_URL_LENGTH = 2048
+
+
+def is_valid_url(value: str) -> bool:
+    """Allow only http/https URLs with a host (prevents javascript:/data: open redirects)."""
+    from urllib.parse import urlparse
+
+    if not value or len(value) > MAX_URL_LENGTH:
+        return False
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not parsed.netloc:
+        return False
+    if any(c.isspace() for c in value):
+        return False
+    return True
+
 
 def generate_short_code(length=6):
     return "".join(random.choices(string.ascii_letters + string.digits, k=length))
@@ -62,6 +83,10 @@ def create_url():
     if not original_url or not isinstance(original_url, str):
         current_app.logger.warning("original_url must be a string")
         abort(400, description="original_url must be a string")
+
+    if not is_valid_url(original_url):
+        current_app.logger.warning(f"Rejected unsafe original_url: {original_url[:80]}")
+        abort(400, description="original_url must be a valid http(s) URL")
 
     if not title or not isinstance(title, str):
         current_app.logger.warning("title must be a string")
