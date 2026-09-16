@@ -81,7 +81,7 @@ db = PooledPostgresqlDatabase(
 
 
 class RequestLog(Model):
-    id = IntegerField(primary_key=True)
+    id = AutoField()
     url_id = IntegerField(null=True)
     user_agent = TextField(default="")
     client_ip = CharField(default="")
