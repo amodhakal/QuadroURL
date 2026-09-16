@@ -25,6 +25,11 @@ The cache layer implements four complementary anti-stampede strategies:
    channel; every worker's subscriber thread applies drops to its local L1.
    Only drops are broadcast (never fills): peers fall through to L2, which
    the mutating worker just wrote, so there is no cross-worker herd (#118).
+   Theoretical race: the L2 write and the publish are both async, so a peer
+   refetch landing exactly between them can re-cache the pre-mutation value
+   from L2 with a fresh TTL. The window is executor lag (microseconds to low
+   milliseconds) versus the up-to-TTL staleness this bus eliminates, and the
+   outcome is still bounded by TTL exactly as before — accepted.
 """
 
 import json
