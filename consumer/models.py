@@ -2,6 +2,7 @@
 
 from playhouse.pool import PooledPostgresqlDatabase
 from shared.schema import create_models
+from shared.delivery_models import create_delivery_models
 
 import config
 
@@ -21,6 +22,8 @@ db = PooledPostgresqlDatabase(
     connect_timeout=5,
 )
 models = create_models(db)
+
+delivery_models = create_delivery_models(db, models)
 User = models.User
 Url = models.Url
 Event = models.Event

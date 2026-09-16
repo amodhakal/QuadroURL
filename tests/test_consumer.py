@@ -28,10 +28,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from confluent_kafka import TopicPartition
 
 CONSUMER_DIR = Path(__file__).resolve().parent.parent / "consumer"
-_CONSUMER_MODULE_NAMES = ("config", "url_create_handler", "consumer_app")
+_CONSUMER_MODULE_NAMES = ("config", "models", "url_create_handler", "consumer_app")
 _MISSING = object()
 
 CODE_RE = re.compile(r"[A-Za-z0-9]{6}\Z")
@@ -46,6 +45,12 @@ def _load_module(name, path):
     return module
 
 
+@pytest.fixture(autouse=True)
+def clean_tables():
+    """These consumer unit tests do not require the integration database."""
+    yield
+
+
 @pytest.fixture
 def consumer_modules(monkeypatch):
     """Load consumer sources under aliased names; undo path/module changes."""
@@ -53,6 +58,7 @@ def consumer_modules(monkeypatch):
     saved = {name: sys.modules.get(name, _MISSING) for name in _CONSUMER_MODULE_NAMES}
     try:
         config_mod = _load_module("config", CONSUMER_DIR / "config.py")
+        models_mod = _load_module("models", CONSUMER_DIR / "models.py")
         handler_mod = _load_module("url_create_handler", CONSUMER_DIR / "url_create_handler.py")
         app_mod = _load_module("consumer_app", CONSUMER_DIR / "app.py")
     except Exception:
@@ -63,7 +69,9 @@ def consumer_modules(monkeypatch):
                 sys.modules[name] = mod
         raise
     try:
-        yield SimpleNamespace(app=app_mod, handler=handler_mod, config=config_mod)
+        yield SimpleNamespace(
+            app=app_mod, handler=handler_mod, config=config_mod, models=models_mod
+        )
     finally:
         for name, mod in saved.items():
             if mod is _MISSING:
@@ -101,28 +109,19 @@ def _valid_create(request_id="r1"):
 
 
 # ---------------------------------------------------------------------------
-# commit_one (#114 poison-skip semantics)
+# Poison messages are buffered, never independently acknowledged
 # ---------------------------------------------------------------------------
 
 
-def test_commit_one_commits_next_offset(consumer_modules):
-    consumer = MagicMock(name="consumer")
-    msg = _kafka_msg(topic="request-logs", partition=2, offset=41)
-    consumer_modules.app.commit_one(consumer, msg)
-    consumer.commit.assert_called_once()
-    _, kwargs = consumer.commit.call_args
-    assert kwargs["asynchronous"] is False
-    (tp,) = kwargs["offsets"]
-    assert isinstance(tp, TopicPartition)
-    assert (tp.topic, tp.partition, tp.offset) == ("request-logs", 2, 42)
+def test_no_direct_poison_commit(consumer_modules):
+    assert not hasattr(consumer_modules.app, "commit_one")
 
 
-def test_commit_one_swallows_commit_errors(consumer_modules):
-    """Poison messages must be skipped without raising (#114)."""
+def test_commit_failure_propagates(consumer_modules):
     consumer = MagicMock(name="consumer")
     consumer.commit.side_effect = RuntimeError("broker down")
-    consumer_modules.app.commit_one(consumer, _kafka_msg(offset=9))
-    consumer.commit.assert_called_once()
+    with pytest.raises(RuntimeError):
+        consumer_modules.app.commit_buffer(consumer, [({}, _kafka_msg(offset=9))])
 
 
 # ---------------------------------------------------------------------------
@@ -433,12 +432,14 @@ def test_drain_request_logs_inserts_and_closes(consumer_modules, monkeypatch):
     app_mod = consumer_modules.app
     db = _fake_db()
     monkeypatch.setattr(app_mod, "db", db)
-    insert_mock = MagicMock(name="insert_many")
-    monkeypatch.setattr(app_mod.RequestLog, "insert_many", insert_mock)
+    persist_mock = MagicMock(name="persist_rows")
+    monkeypatch.setattr(app_mod, "persist_rows", persist_mock)
     payload = {"method": "GET", "path": "/abc123"}
-    assert app_mod.drain_request_logs([(payload, _kafka_msg())]) is True
-    insert_mock.assert_called_once_with([payload])
-    insert_mock.return_value.execute.assert_called_once_with()
+    msg = _kafka_msg()
+    assert app_mod.drain_request_logs([(payload, msg)]) is True
+    persist_mock.assert_called_once_with(
+        [(payload, msg)], db, app_mod.models, app_mod.delivery_models, app_mod.RequestLog
+    )
     db.connect.assert_called_once_with(reuse_if_open=True)
     db.close.assert_called_once_with()
 
@@ -466,12 +467,14 @@ def test_drain_url_events_inserts_and_closes(consumer_modules, monkeypatch):
     app_mod = consumer_modules.app
     db = _fake_db()
     monkeypatch.setattr(app_mod, "db", db)
-    insert_mock = MagicMock(name="insert_many")
-    monkeypatch.setattr(app_mod.Event, "insert_many", insert_mock)
+    persist_mock = MagicMock(name="persist_rows")
+    monkeypatch.setattr(app_mod, "persist_rows", persist_mock)
     payload = {"url_id": 1, "user_id": 2, "event_type": "click"}
-    assert app_mod.drain_url_events([(payload, _kafka_msg())]) is True
-    insert_mock.assert_called_once_with([payload])
-    insert_mock.return_value.execute.assert_called_once_with()
+    msg = _kafka_msg()
+    assert app_mod.drain_url_events([(payload, msg)]) is True
+    assert persist_mock.call_count == 1
+    args = persist_mock.call_args.args
+    assert args[0] == [(payload, msg)] and args[1] is db
     db.connect.assert_called_once_with(reuse_if_open=True)
     db.close.assert_called_once_with()
 
@@ -480,9 +483,8 @@ def test_drain_url_events_failure_returns_false(consumer_modules, monkeypatch):
     app_mod = consumer_modules.app
     db = _fake_db()
     monkeypatch.setattr(app_mod, "db", db)
-    insert_mock = MagicMock(name="insert_many")
-    insert_mock.return_value.execute.side_effect = RuntimeError("db down")
-    monkeypatch.setattr(app_mod.Event, "insert_many", insert_mock)
+    persist_mock = MagicMock(name="persist_rows", side_effect=RuntimeError("db down"))
+    monkeypatch.setattr(app_mod, "persist_rows", persist_mock)
     assert app_mod.drain_url_events([({"url_id": 1}, _kafka_msg())]) is False
     db.close.assert_called_once_with()
 

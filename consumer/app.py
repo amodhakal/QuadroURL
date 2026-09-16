@@ -7,8 +7,10 @@ import time
 from datetime import datetime, timezone
 
 import redis
+from peewee import DataError, IntegrityError
 from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
-from models import Event, RequestLog, db
+from models import Event, RequestLog, db, delivery_models, models
+from shared.delivery import Poison, decode_message, persist_rows, quarantine, schedule_milestones
 
 import config
 from retention import purge_request_logs_older_than
@@ -94,17 +96,6 @@ def create_consumer(group_id):
     )
 
 
-def commit_one(consumer, msg):
-    """Commit a single message offset (used to skip poison messages)."""
-    try:
-        consumer.commit(
-            offsets=[TopicPartition(msg.topic(), msg.partition(), msg.offset() + 1)],
-            asynchronous=False,
-        )
-    except Exception:
-        logger.exception("Failed to commit poison-message offset")
-
-
 def commit_buffer(consumer, buffered):
     """Commit offsets AFTER the last successfully-buffered message per partition.
 
@@ -135,8 +126,7 @@ def drain_request_logs(buffer):
     start = time.time()
     try:
         db.connect(reuse_if_open=True)
-        with db.atomic():
-            RequestLog.insert_many(rows).execute()
+        persist_rows(buffer, db, models, delivery_models, RequestLog)
         elapsed = time.time() - start
         logger.info(f"[request-logs] Inserted {len(rows)} records in {elapsed:.2f}s")
         return True
@@ -156,14 +146,55 @@ def drain_url_events(buffer):
     start = time.time()
     try:
         db.connect(reuse_if_open=True)
-        with db.atomic():
-            Event.insert_many(rows).execute()
+        persist_rows(
+            buffer,
+            db,
+            models,
+            delivery_models,
+            Event,
+            lambda row: (
+                schedule_milestones(models, delivery_models, row.url_id)
+                if row.event_type == "click"
+                else None
+            ),
+        )
         elapsed = time.time() - start
         logger.info(f"[url-events] Inserted {len(rows)} records in {elapsed:.2f}s")
         return True
     except Exception:
         logger.exception("[url-events] Failed to insert batch")
         return False
+    finally:
+        if not db.is_closed():
+            db.close()
+
+
+def drain_url_creates(buffer, redis_client):
+    events = []
+    try:
+        db.connect(reuse_if_open=True)
+        for payload, msg in buffer:
+            if isinstance(payload, Poison):
+                with db.atomic():
+                    quarantine(msg, payload.error, delivery_models)
+                continue
+            try:
+                ok, created = handle_url_create_batch(
+                    [payload],
+                    db,
+                    redis_client,
+                    raise_poison=True,
+                )
+                if not ok:
+                    return False, []
+                events.extend(created)
+            except (IntegrityError, DataError, ValueError, TypeError) as exc:
+                with db.atomic():
+                    quarantine(msg, type(exc).__name__, delivery_models)
+        return True, events
+    except Exception:
+        logger.exception("[url-creates] Durable drain failed")
+        return False, []
     finally:
         if not db.is_closed():
             db.close()
@@ -242,7 +273,7 @@ def run_request_log_consumer():
             continue
 
         try:
-            data = json.loads(msg.value().decode("utf-8"))
+            data = decode_message(msg)
             payload = {
                 "user_agent": data.get("user_agent", ""),
                 "client_ip": data.get("client_ip", ""),
@@ -251,13 +282,11 @@ def run_request_log_consumer():
                 "status_code": data.get("status_code", 0),
                 "latency_ms": data.get("latency_ms", 0.0),
                 "short_code": data.get("short_code", ""),
-                "created_at": data.get("created_at", ""),
+                "created_at": data.get("created_at") or datetime.now(timezone.utc),
             }
             buffer.append((payload, msg))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[request-logs] Skipping poison message: {e}")
-            commit_one(consumer, msg)
-            continue
+        except (ValueError, UnicodeDecodeError, AttributeError, TypeError) as e:
+            buffer.append((Poison(type(e).__name__), msg))
 
         now = time.time()
         if len(buffer) >= config.BATCH_SIZE_LOGS:
@@ -320,7 +349,7 @@ def run_url_event_consumer():
             continue
 
         try:
-            data = json.loads(msg.value().decode("utf-8"))
+            data = decode_message(msg)
             details = data.get("details", {})
             if isinstance(details, dict):
                 details = json.dumps(details)
@@ -332,10 +361,8 @@ def run_url_event_consumer():
                 "timestamp": data.get("created_at") or data.get("timestamp") or None,
             }
             buffer.append((payload, msg))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[url-events] Skipping poison message: {e}")
-            commit_one(consumer, msg)
-            continue
+        except (ValueError, UnicodeDecodeError, AttributeError, TypeError) as e:
+            buffer.append((Poison(type(e).__name__), msg))
 
         now = time.time()
         if len(buffer) >= config.BATCH_SIZE_EVENTS:
@@ -367,8 +394,7 @@ def run_url_create_consumer():
 
     def drain():
         nonlocal stalled
-        messages = [payload for payload, _ in buffer]
-        ok, events = handle_url_create_batch(messages, db, redis_client)
+        ok, events = drain_url_creates(buffer, redis_client)
         if ok:
             commit_buffer(consumer, buffer)
             buffer.clear()
@@ -403,12 +429,10 @@ def run_url_create_consumer():
             continue
 
         try:
-            data = json.loads(msg.value().decode("utf-8"))
+            data = decode_message(msg)
             buffer.append((data, msg))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"[url-creates] Skipping poison message: {e}")
-            commit_one(consumer, msg)
-            continue
+        except (ValueError, UnicodeDecodeError, AttributeError, TypeError) as e:
+            buffer.append((Poison(type(e).__name__), msg))
 
         now = time.time()
         if len(buffer) >= config.BATCH_SIZE_CREATES:
@@ -419,8 +443,7 @@ def run_url_create_consumer():
             last_drain = now
 
     if buffer:
-        messages = [payload for payload, _ in buffer]
-        ok, events = handle_url_create_batch(messages, db, redis_client)
+        ok, events = drain_url_creates(buffer, redis_client)
         if ok:
             commit_buffer(consumer, buffer)
             emit_created_events(event_producer, events)
