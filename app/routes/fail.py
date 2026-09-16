@@ -2,11 +2,10 @@ import os
 
 from flask import Blueprint, abort, current_app, request
 
-fail_bp = Blueprint("fail", __name__)
-
-
 from app.utils.auth import require_admin
 from app.utils.ratelimit import rate_limit
+
+fail_bp = Blueprint("fail", __name__)
 
 
 @fail_bp.route("/fail", methods=["GET"])

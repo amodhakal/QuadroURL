@@ -29,20 +29,12 @@ from app.cache import (
 from app.models.url import Url
 from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
-from app.utils.auth import require_auth, require_owner, scope_query, cache_scope, is_admin
+from app.utils.auth import require_auth, require_owner, scope_query, is_admin
 from flask import g
 from hashlib import sha256
 from app.utils.ratelimit import rate_limit
-from app.utils.validation import (
-    parse_expires_at,
-    reject_unknown_fields,
-    require_bool,
-    require_int,
-    require_json,
-    require_non_empty_str,
-    require_str,
-    validate_offset_params,
-)
+from app.utils.schemas import UrlCreate, UrlUpdate, UrlQuery, parse_body, parse_query
+from app.utils.pagination import bounds, cache_key as list_cache_key, paginate, envelope
 
 
 urls_bp = Blueprint("urls", __name__)
@@ -57,7 +49,7 @@ MAX_TITLE_LENGTH = 255
 
 
 def is_valid_url(value: str) -> bool:
-    """Allow only http/https URLs with a host (prevents javascript:/data: open redirects)."""
+    """Compatibility URL predicate; request validation uses UrlCreate (#191)."""
     from urllib.parse import urlparse
 
     if not value or len(value) > MAX_URL_LENGTH:
@@ -170,39 +162,15 @@ def _idempotency_key(data):
 
 
 @urls_bp.route("/urls", methods=["POST"])
-@rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def create_url():
-    data = require_json("Invalid JSON received for create_url")
-
+    data = parse_body(UrlCreate)
     user_id = data.get("user_id", g.current_user_id)
     require_owner(user_id)
-    original_url = data.get("original_url")
-    title = data.get("title")
-
-    require_int(user_id, "user_id must be an integer", "user_id must be an integer")
-
-    require_str(original_url, "original_url must be a string", "original_url must be a string")
-
-    if len(original_url) > MAX_URL_LENGTH:
-        current_app.logger.warning(f"Rejected overlong original_url: length={len(original_url)}")
-        abort(400, description="original_url must not exceed 2048 characters in length")
-
-    if len(original_url) > MAX_ORIGINAL_URL_LENGTH:
-        current_app.logger.warning(f"Rejected overlong original_url: length={len(original_url)}")
-        abort(400, description="original_url must not exceed 255 characters in length")
-
-    if not is_valid_url(original_url):
-        current_app.logger.warning(f"Rejected unsafe original_url: {original_url[:80]}")
-        abort(400, description="original_url must be a valid http(s) URL")
-
-    require_str(title, "title must be a string", "title must be a string")
-
-    if len(title) > MAX_TITLE_LENGTH:
-        current_app.logger.warning(f"Rejected overlong title: length={len(title)}")
-        abort(400, description="title must not exceed 255 characters in length")
-
-    expires_at = parse_expires_at(data.get("expires_at"))
+    original_url = data["original_url"]
+    title = data["title"]
+    expires_at = data.get("expires_at")
 
     if get_user(user_id) is None:
         current_app.logger.warning("User not found")
@@ -267,15 +235,17 @@ def create_url():
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def get_url_status(request_id):
     from app.cache import get_l2
 
     # Older IDs have no owner marker: only a persisted owned row can authorize
     # them. Do not trust unowned Redis payloads, including pending/error states.
-    if not request_id.startswith(f"u{g.current_user_id}:") and not is_admin():
-        existing = Url.get_or_none((Url.request_id == request_id) & (Url.user == g.current_user_id))
-        if existing is None:
-            abort(404)
+    existing = Url.get_or_none(Url.request_id == request_id)
+    if existing is not None:
+        require_owner(existing.user_id)
+    elif not request_id.startswith(f"u{g.current_user_id}:") and not is_admin():
+        abort(404)
 
     try:
         r = get_l2()
@@ -352,18 +322,11 @@ def _require_int_query_param(name):
 @urls_bp.route("/urls", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def list_urls():
-    offset = request.args.get("offset", 0, type=int)
-    size = request.args.get("size", 20, type=int)
-    offset, size = validate_offset_params(offset, size)
-
-    # Canonical cache key from validated params only (#111): bounds key
-    # cardinality instead of caching arbitrary raw query strings.
-    key_parts = [f"offset={offset}", f"size={size}"]
-    for name in ("id", "user_id", "short_code", "original_url", "is_active", "before_id"):
-        if name in request.args:
-            key_parts.append(f"{name}={request.args[name][:128]}")
-    cache_key = "list:urls:" + cache_scope() + "&".join(key_parts)
+    params = parse_query(UrlQuery)
+    bounds(params)
+    cache_key = list_cache_key("urls", params)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
@@ -381,34 +344,11 @@ def list_urls():
     )
 
     query = scope_query(query, Url.user)
-    if "id" in request.args:
-        query = query.where(Url.id == _require_int_query_param("id"))
-
-    if "user_id" in request.args:
-        query = query.where(Url.user_id == _require_int_query_param("user_id"))
-
-    if "short_code" in request.args:
-        query = query.where(Url.short_code == request.args["short_code"])
-
-    if "original_url" in request.args:
-        query = query.where(Url.original_url == request.args["original_url"])
-
-    if "is_active" in request.args:
-        val = request.args["is_active"].lower()
-        if val not in ("true", "false"):
-            current_app.logger.warning(
-                f"Invalid is_active query param: {request.args['is_active']!r}"
-            )
-            abort(400, description="is_active must be 'true' or 'false'")
-        query = query.where(Url.is_active == (val == "true"))
-
-    if "before_id" in request.args:
-        query = query.where(Url.id < _require_int_query_param("before_id"))
-        query = query.order_by(Url.id.desc()).limit(size)
-        urls = list(query)
-    else:
-        query = query.order_by(Url.id).limit(size).offset(offset)
-        urls = list(query)
+    for name in ("id", "user_id", "short_code", "original_url", "is_active"):
+        value = getattr(params, name)
+        if value is not None:
+            query = query.where(getattr(Url, name) == value)
+    urls, has_more = paginate(query, Url.id, params)
 
     current_app.logger.info(f"Listed {len(urls)} URL records")
 
@@ -429,6 +369,7 @@ def list_urls():
             for u in urls
         ],
     }
+    payload = envelope(payload["sample"], params, has_more, payload)
     set_list_cache(cache_key, payload)
     return jsonify(payload)
 
@@ -436,6 +377,7 @@ def list_urls():
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def get_url_cached(url_id):
     owner = Url.get_or_none(Url.id == url_id)
     if owner is None:
@@ -446,7 +388,6 @@ def get_url_cached(url_id):
         return jsonify(cached)
     try:
         url = Url.get_by_id(url_id)
-        require_owner(url.user_id)
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for id={url_id}")
         abort(404)
@@ -463,6 +404,7 @@ def get_url_cached(url_id):
 @urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def update_url(url_id):
     try:
         url = Url.get_by_id(url_id)
@@ -471,18 +413,10 @@ def update_url(url_id):
         current_app.logger.warning(f"URL not found for update id={url_id}")
         abort(404)
 
-    data = require_json("Invalid JSON received for update_url")
-
-    reject_unknown_fields(data, {"title", "is_active", "expires_at"})
+    data = parse_body(UrlUpdate)
 
     if "title" in data:
-        require_non_empty_str(data["title"], "title must be a non-empty string")
-        if len(data["title"].strip()) > MAX_TITLE_LENGTH:
-            current_app.logger.warning(
-                f"Rejected overlong title on update: length={len(data['title'].strip())}"
-            )
-            abort(400, description="title must not exceed 255 characters in length")
-        url.title = data["title"].strip()
+        url.title = data["title"]
         create_event(
             url.id,
             url.user_id,
@@ -495,7 +429,6 @@ def update_url(url_id):
         current_app.logger.info(f"Updated title for url id={url.id}")
 
     if "is_active" in data:
-        require_bool(data["is_active"], "is_active must be a boolean")
         url.is_active = data["is_active"]
         create_event(
             url.id,
@@ -509,7 +442,7 @@ def update_url(url_id):
         current_app.logger.info(f"Updated is_active for url id={url.id}")
 
     if "expires_at" in data:
-        expires_at = parse_expires_at(data["expires_at"])
+        expires_at = data["expires_at"]
         url.expires_at = expires_at
         create_event(
             url.id,
@@ -536,6 +469,7 @@ def update_url(url_id):
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def delete_url_endpoint(url_id):
     from app.database import db
 

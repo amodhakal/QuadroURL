@@ -18,21 +18,17 @@ from app.cache import (
 from app.database import db
 from app.models.url import Url
 from app.models.user import User
-from app.utils.auth import require_auth, require_admin, require_owner, scope_query, cache_scope
+from app.utils.auth import require_auth, require_admin, require_owner, scope_query
 from app.utils.ratelimit import rate_limit
-from app.utils.validation import (
-    reject_unknown_fields,
-    require_json,
-    require_non_empty_str,
-    validate_page_params,
-)
+from app.utils.schemas import UserCreate, UserUpdate, ListQuery, parse_body, parse_query, validate
+from app.utils.pagination import bounds, cache_key as list_cache_key, paginate, envelope
 
 users_bp = Blueprint("users", __name__)
 
 
 @users_bp.route("/users/bulk", methods=["POST"])
-@rate_limit(capacity=10, refill_rate=1.0)
 @require_admin
+@rate_limit(capacity=10, refill_rate=1.0)
 def bulk_import_users():
     if not request.content_type or not request.content_type.startswith("multipart/form-data"):
         current_app.logger.warning(f"Invalid Content-Type for bulk import: {request.content_type}")
@@ -48,7 +44,7 @@ def bulk_import_users():
         abort(400, description="Invalid file type, expected .csv")
 
     try:
-        raw = file.stream.read()
+        raw = file.stream.read(5 * 1024 * 1024 + 1)
         if len(raw) > 5 * 1024 * 1024:
             abort(400, description="CSV too large (max 5MB)")
         text = raw.decode("utf-8")
@@ -72,7 +68,7 @@ def bulk_import_users():
         if not username or not email:
             abort(400, description=f"Row {i}: username and email are required")
         # Tolerate unexpected columns by whitelisting (#130).
-        rows.append({"username": username, "email": email})
+        rows.append(validate(UserCreate, {"username": username, "email": email}).model_dump())
 
     if not rows:
         return jsonify({"imported": 0}), 200
@@ -94,23 +90,17 @@ def bulk_import_users():
 @users_bp.route("/users", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def list_users():
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 20, type=int)
-    page, per_page = validate_page_params(page, per_page)
-
-    cache_key = f"list:users:{cache_scope()}page={page}&per_page={per_page}"
+    params = parse_query(ListQuery)
+    bounds(params)
+    cache_key = list_cache_key("users", params)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
 
-    offset = (page - 1) * per_page
-    users = (
-        scope_query(User.select(User.id, User.username, User.email, User.created_at), User.id)
-        .order_by(User.id)
-        .limit(per_page)
-        .offset(offset)
-    )
+    query = scope_query(User.select(User.id, User.username, User.email, User.created_at), User.id)
+    users, has_more = paginate(query, User.id, params)
 
     payload = {
         "kind": "list",
@@ -124,6 +114,7 @@ def list_users():
             for u in users
         ],
     }
+    payload = envelope(payload["sample"], params, has_more, payload)
     set_list_cache(cache_key, payload)
     return jsonify(payload)
 
@@ -131,6 +122,7 @@ def list_users():
 @users_bp.route("/users/<int:user_id>", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def get_user_cached(user_id):
     require_owner(user_id)
     cached = get_user(user_id)
@@ -148,16 +140,9 @@ def get_user_cached(user_id):
 @users_bp.route("/users", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
 def create_user():
-    data = require_json("Invalid JSON received for create_user")
-
-    username = data.get("username")
-    email = data.get("email")
-
-    require_non_empty_str(username, "username must be a non-empty string")
-    require_non_empty_str(email, "email must be a non-empty string")
-
-    # Prevent mass assignment: only allow whitelisted fields (#103).
-    reject_unknown_fields(data, {"username", "email"})
+    data = parse_body(UserCreate)
+    username = data["username"]
+    email = data["email"]
 
     try:
         user = User.create(username=username.strip(), email=email.strip())
@@ -174,13 +159,14 @@ def create_user():
     from app.utils.auth import issue_api_key
 
     _, raw_key = issue_api_key(user.id)
-    result["api_key"] = raw_key
+    result = {**result, "api_key": raw_key}
     return jsonify(result), 201
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def update_user(user_id):
     require_owner(user_id)
     try:
@@ -188,16 +174,9 @@ def update_user(user_id):
     except User.DoesNotExist:
         abort(404)
 
-    data = require_json("Invalid JSON received for update_user")
-
-    reject_unknown_fields(data, {"username", "email"})
-
-    if "username" in data:
-        require_non_empty_str(data["username"], "username must be a non-empty string")
-        user.username = data["username"].strip()
-    if "email" in data:
-        require_non_empty_str(data["email"], "email must be a non-empty string")
-        user.email = data["email"].strip()
+    data = parse_body(UserUpdate)
+    for field, value in data.items():
+        setattr(user, field, value)
 
     try:
         user.save()
@@ -213,6 +192,7 @@ def update_user(user_id):
 @users_bp.route("/users/<int:user_id>", methods=["DELETE"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
+@rate_limit(capacity=300, refill_rate=5.0)
 def delete_user_endpoint(user_id):
     require_owner(user_id)
     try:

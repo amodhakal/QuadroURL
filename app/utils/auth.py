@@ -27,14 +27,19 @@ def issue_api_key(user_id, name=""):
 
 def is_admin():
     configured = current_app.config.get("ADMIN_USER_IDS", os.getenv("ADMIN_USER_IDS", ""))
-    ids = configured.split(",") if isinstance(configured, str) else configured
-    return str(getattr(g, "current_user_id", "")) in {str(i).strip() for i in ids}
+    ids = configured.split(",") if isinstance(configured, str) else (configured or [])
+    user_id = getattr(g, "current_user_id", None)
+    return user_id is not None and str(user_id) in {str(i).strip() for i in ids if str(i).strip()}
 
 
-def require_owner(user_id):
+def assert_owner(user_id):
     """Hide foreign resources; check before reading even a shared object cache."""
     if user_id != g.current_user_id and not is_admin():
         abort(404)
+
+
+# Compatibility with the initial ownership implementation.
+require_owner = assert_owner
 
 
 def scope_query(query, owner_field):

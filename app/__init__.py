@@ -241,6 +241,13 @@ def create_app():
         app.logger.warning(f"Unauthorized: {error.description}")
         return jsonify({"error": str(error.description)}), 401
 
+    @app.errorhandler(403)
+    @app.errorhandler(405)
+    @app.errorhandler(413)
+    @app.errorhandler(415)
+    def api_client_error(error):
+        return jsonify({"error": str(error.description)}), error.code
+
     @app.errorhandler(404)
     def not_found(error):
         return jsonify({"error": "Not found"}), 404
