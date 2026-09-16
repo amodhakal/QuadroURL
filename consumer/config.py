@@ -32,3 +32,9 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 DB_MAX_CONNECTIONS_LOGS = int(os.environ.get("DB_MAX_CONNECTIONS_LOGS", "10"))
 DB_MAX_CONNECTIONS_EVENTS = int(os.environ.get("DB_MAX_CONNECTIONS_EVENTS", "10"))
 DB_MAX_CONNECTIONS_CREATES = int(os.environ.get("DB_MAX_CONNECTIONS_CREATES", "5"))
+
+# Request-log retention (#167): rows older than RETENTION_SECONDS_LOGS are
+# purged by the logs consumer roughly every RETENTION_INTERVAL_LOGS seconds.
+# Purges run on the idle path only and never block draining.
+RETENTION_SECONDS_LOGS = int(os.environ.get("RETENTION_SECONDS_LOGS", str(30 * 24 * 3600)))
+RETENTION_INTERVAL_LOGS = int(os.environ.get("RETENTION_INTERVAL_LOGS", "3600"))

@@ -11,6 +11,7 @@ from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
 from models import Event, RequestLog, db
 
 import config
+from retention import purge_request_logs_older_than
 from url_create_handler import handle_url_create_batch
 
 
@@ -192,6 +193,7 @@ def run_request_log_consumer():
 
     buffer = []
     last_drain = time.time()
+    last_purge = time.time()
     stalled = False
 
     def drain():
@@ -220,6 +222,17 @@ def run_request_log_consumer():
             if buffer and (now - last_drain >= config.DRAIN_INTERVAL_LOGS):
                 drain()
                 last_drain = now
+            # Retention purge (#167): bounded, off the hot path (idle only).
+            if now - last_purge >= getattr(config, "RETENTION_INTERVAL_LOGS", 3600):
+                try:
+                    purged = purge_request_logs_older_than(
+                        db, RequestLog, getattr(config, "RETENTION_SECONDS_LOGS", 30 * 24 * 3600)
+                    )
+                    if purged:
+                        logger.info(f"[request-logs] Purged {purged} rows past retention")
+                except Exception:
+                    logger.exception("[request-logs] Retention purge failed (continuing)")
+                last_purge = now
             continue
 
         if msg.error():
