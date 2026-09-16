@@ -1,6 +1,10 @@
 # ruff: noqa: E501 — DASHBOARD_HTML is an embedded HTML/JS template; wrapping
 # lines would change the served response bytes, so line length is exempt here.
 from flask import Blueprint, Response
+from app.utils.auth import require_admin
+
+STREAM_MAX_SECONDS = 300  # bound long-lived SSE connections; the client reconnects
+POLL_INTERVAL = 3000  # milliseconds between server-sent metrics snapshots
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -339,14 +343,48 @@ function timeLabel() { return new Date().toLocaleTimeString([], { hour:'2-digit'
 
 function push(arr, val) { arr.push(val); if (arr.length > MAX_POINTS) arr.shift(); }
 
-async function poll() {
-  try {
-    const [mRes, lRes] = await Promise.all([fetch('/metrics'), fetch('/logs')]);
-    const m = await mRes.json();
-    const l = await lRes.json();
+async function connectStream() {
+  const token = window.prompt('Admin API key (kept in memory only):');
+  if (!token) return;
+  while (true) {
+    try {
+      const response = await fetch('/dashboard/stream', {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store'
+      });
+      if (response.status === 401 || response.status === 403) {
+        document.getElementById('statusText').textContent = 'Administrator key required';
+        return;
+      }
+      if (!response.ok) throw new Error('Stream unavailable');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = '';
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        pending += decoder.decode(value, {stream: true});
+        let boundary;
+        while ((boundary = pending.indexOf('\\n\\n')) !== -1) {
+          const frame = pending.slice(0, boundary);
+          pending = pending.slice(boundary + 2);
+          if (frame.startsWith('data: ')) render(JSON.parse(frame.slice(6)));
+        }
+      }
+    } catch (_) {
+      document.getElementById('statusText').textContent = 'Connection lost — reconnecting';
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
 
+function render(payload) {
+  try {
+    const m = payload.metrics;
+    const l = { logs: payload.logs };
     document.getElementById('statusDot').style.background = '#22c55e';
-    document.getElementById('statusText').textContent = 'All systems operational';
+    document.getElementById('statusText').textContent = payload.kafka_lag.available
+      ? 'Kafka lag: ' + Object.entries(payload.kafka_lag.groups).map(([g, n]) => g + ': ' + (n ?? 'unknown')).join(' | ')
+      : 'Kafka lag unavailable';
 
     document.getElementById('avgLatency').textContent = m.latency.avg_ms + ' ms';
     document.getElementById('p95').textContent = m.latency.p95_ms + ' ms';
@@ -414,11 +452,45 @@ async function poll() {
   }
 }
 
-poll();
-setInterval(poll, POLL_INTERVAL);
+connectStream();
 </script>
 </body>
 </html>"""
+
+
+@dashboard_bp.route("/dashboard/stream")
+@require_admin
+def dashboard_stream():
+    """Server-sent events: metrics snapshot every interval; heartbeat comments."""
+    from flask import Response, stream_with_context
+
+    def generate():
+        import json
+        import time as _time
+
+        from app.log_store import log_records, log_records_lock
+        from app.routes.metrics import get_metrics
+        from app.utils.kafka_lag import snapshot as lag_snapshot
+
+        start = _time.monotonic()
+        while _time.monotonic() - start < STREAM_MAX_SECONDS:
+            with log_records_lock:
+                logs = list(log_records)[-20:]
+            payload = {
+                "metrics": get_metrics().get_json(),
+                "logs": logs,
+                "kafka_lag": lag_snapshot(),
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            _time.sleep(POLL_INTERVAL / 1000.0)
+        # Client reconnects automatically; close the stream after the bound.
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @dashboard_bp.route("/dashboard")
