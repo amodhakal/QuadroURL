@@ -26,7 +26,7 @@ from app.cache import (
     set_url_by_short_code,
 )
 from app.models.url import Url
-from app.utils.events import create_event_async as create_event
+from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
 from app.utils.ratelimit import rate_limit
 

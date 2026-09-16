@@ -6,7 +6,7 @@ from app.utils.kafka_producer import publish_event
 logger = logging.getLogger("quadroPE.events")
 
 
-def create_event_async(url_id, user_id, event_type, details_dict):
+def create_event(url_id, user_id, event_type, details_dict):
     try:
         from app.utils.request_ctx import get_request_id
 
@@ -23,10 +23,6 @@ def create_event_async(url_id, user_id, event_type, details_dict):
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
-
-
-def create_event(url_id, user_id, event_type, details_dict):
-    create_event_async(url_id, user_id, event_type, details_dict)
 
 
 def flush_events():
