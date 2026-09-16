@@ -29,13 +29,21 @@ def format_event(event):
 
 @events_bp.route("/events", methods=["GET"])
 def list_events():
-    cache_key = f"list:events:{request.query_string.decode()}"
+    offset = request.args.get("offset", 0, type=int)
+    size = request.args.get("size", 20, type=int)
+    if offset is None or offset < 0:
+        abort(400, description="offset must be >= 0")
+    if size is None or size < 1 or size > 100:
+        abort(400, description="size must be between 1 and 100")
+
+    key_parts = [f"offset={offset}", f"size={size}"]
+    for name in ("url_id", "user_id", "event_type", "before_id"):
+        if name in request.args:
+            key_parts.append(f"{name}={request.args[name][:128]}")
+    cache_key = "list:events:" + "&".join(key_parts)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
-
-    offset = request.args.get("offset", 0, type=int)
-    size = request.args.get("size", 20, type=int)
 
     query = Event.select(
         Event.id,

@@ -59,13 +59,17 @@ def bulk_import_users():
 
 @users_bp.route("/users", methods=["GET"])
 def list_users():
-    cache_key = f"list:users:{request.query_string.decode()}"
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+    if page is None or page < 1:
+        abort(400, description="page must be >= 1")
+    if per_page is None or per_page < 1 or per_page > 100:
+        abort(400, description="per_page must be between 1 and 100")
+
+    cache_key = f"list:users:page={page}&per_page={per_page}"
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
-
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 20, type=int)
 
     offset = (page - 1) * per_page
     users = (

@@ -181,13 +181,23 @@ def get_url_status(request_id):
 
 @urls_bp.route("/urls", methods=["GET"])
 def list_urls():
-    cache_key = f"list:urls:{request.query_string.decode()}"
+    offset = request.args.get("offset", 0, type=int)
+    size = request.args.get("size", 20, type=int)
+    if offset is None or offset < 0:
+        abort(400, description="offset must be >= 0")
+    if size is None or size < 1 or size > 100:
+        abort(400, description="size must be between 1 and 100")
+
+    # Canonical cache key from validated params only (#111): bounds key
+    # cardinality instead of caching arbitrary raw query strings.
+    key_parts = [f"offset={offset}", f"size={size}"]
+    for name in ("id", "user_id", "short_code", "original_url", "is_active", "before_id"):
+        if name in request.args:
+            key_parts.append(f"{name}={request.args[name][:128]}")
+    cache_key = "list:urls:" + "&".join(key_parts)
     cached = get_list_cache(cache_key)
     if cached is not None:
         return jsonify(cached)
-
-    offset = request.args.get("offset", 0, type=int)
-    size = request.args.get("size", 20, type=int)
 
     query = Url.select(
         Url.id,
@@ -214,6 +224,8 @@ def list_urls():
 
     if "is_active" in request.args:
         val = request.args["is_active"].lower()
+        if val not in ("true", "false"):
+            abort(400, description="is_active must be 'true' or 'false'")
         query = query.where(Url.is_active == (val == "true"))
 
     if "before_id" in request.args:
