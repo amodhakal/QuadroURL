@@ -180,15 +180,11 @@ def create_url():
     require_str(original_url, "original_url must be a string", "original_url must be a string")
 
     if len(original_url) > MAX_URL_LENGTH:
-        current_app.logger.warning(
-            f"Rejected overlong original_url: length={len(original_url)}"
-        )
+        current_app.logger.warning(f"Rejected overlong original_url: length={len(original_url)}")
         abort(400, description="original_url must not exceed 2048 characters in length")
 
     if len(original_url) > MAX_ORIGINAL_URL_LENGTH:
-        current_app.logger.warning(
-            f"Rejected overlong original_url: length={len(original_url)}"
-        )
+        current_app.logger.warning(f"Rejected overlong original_url: length={len(original_url)}")
         abort(400, description="original_url must not exceed 255 characters in length")
 
     if not is_valid_url(original_url):
