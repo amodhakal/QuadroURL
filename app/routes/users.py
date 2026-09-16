@@ -1,5 +1,4 @@
 import csv
-import os
 
 from flask import Blueprint, abort, current_app, jsonify, request
 from peewee import chunked
@@ -28,8 +27,6 @@ from app.utils.validation import (
 )
 
 users_bp = Blueprint("users", __name__)
-
-DATA_DIR = os.path.join("./data")
 
 
 @users_bp.route("/users/bulk", methods=["POST"])
@@ -83,8 +80,8 @@ def bulk_import_users():
     imported = 0
     with db.atomic():
         for batch in chunked(rows, 100):
-            User.insert_many(batch).on_conflict_ignore().execute()
-            imported += len(batch)
+            inserted = User.insert_many(batch).on_conflict_ignore().as_rowcount().execute()
+            imported += inserted
 
     clear_all_users()
     clear_list_cache("list:users:")
