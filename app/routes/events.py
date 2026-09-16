@@ -35,6 +35,19 @@ def format_event(event):
     return d
 
 
+def _require_int_query_param(name):
+    """Parse an integer query param or abort 400 (#242).
+
+    Same silent-None guard as the urls list route: present-but-unparseable
+    values 400 instead of producing an ``IS NULL`` comparison.
+    """
+    value = request.args.get(name, type=int)
+    if value is None:
+        current_app.logger.warning(f"Invalid {name} query param: {request.args.get(name)!r}")
+        abort(400, description=f"{name} must be an integer")
+    return value
+
+
 @events_bp.route("/events", methods=["GET"])
 def list_events():
     offset = request.args.get("offset", 0, type=int)
@@ -60,14 +73,14 @@ def list_events():
     )
 
     if "url_id" in request.args:
-        query = query.where(Event.url == request.args.get("url_id", type=int))
+        query = query.where(Event.url == _require_int_query_param("url_id"))
     if "user_id" in request.args:
-        query = query.where(Event.user == request.args.get("user_id", type=int))
+        query = query.where(Event.user == _require_int_query_param("user_id"))
     if "event_type" in request.args:
         query = query.where(Event.event_type == request.args["event_type"])
 
     if "before_id" in request.args:
-        query = query.where(Event.id < request.args.get("before_id", type=int))
+        query = query.where(Event.id < _require_int_query_param("before_id"))
         query = query.order_by(Event.id.desc()).limit(size)
         rows = list(query)
     else:
