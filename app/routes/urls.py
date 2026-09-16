@@ -16,6 +16,7 @@ from playhouse.shortcuts import model_to_dict
 from app.cache import (
     clear_list_cache,
     delete_url,
+    delete_url_by_short_code,
     get_list_cache,
     get_url,
     get_url_by_short_code,
@@ -285,6 +286,9 @@ def update_url(url_id):
     url.save()
     data = format_url(url)
     set_url(url_id, data)
+    # Keep the short-code cache coherent: redirects read via short_code,
+    # so a stale entry would keep serving old title/is_active.
+    set_url_by_short_code(url.short_code, data)
     clear_list_cache("list:urls:")
     clear_list_cache("list:events:")
     return jsonify(data)
@@ -296,9 +300,12 @@ def delete_url_endpoint(url_id):
 
     try:
         url = Url.get_by_id(url_id)
+        short_code = url.short_code
         with db.atomic():
             url.delete_instance(recursive=True)
         delete_url(url_id)
+        if short_code:
+            delete_url_by_short_code(short_code)
         clear_list_cache("list:urls:")
         clear_list_cache("list:events:")
         current_app.logger.info(f"Deleted URL id={url_id}")
