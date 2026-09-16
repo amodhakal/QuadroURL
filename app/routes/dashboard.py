@@ -315,9 +315,17 @@ const systemChart = new Chart(document.getElementById('systemChart'), {
 });
 
 function statusBadge(code) {
-  if (code < 300) return `<span class="badge badge-ok">${code}</span>`;
-  if (code < 500) return `<span class="badge badge-warn">${code}</span>`;
-  return `<span class="badge badge-err">${code}</span>`;
+  const n = Number(code) || 0;
+  if (n < 300) return `<span class="badge badge-ok">${n}</span>`;
+  if (n < 500) return `<span class="badge badge-warn">${n}</span>`;
+  return `<span class="badge badge-err">${n}</span>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"'`=\\/]/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+    "'": '&#39;', '`': '&#96;', '=': '&#61;', '/': '&#47;',
+  }[c]));
 }
 
 function fmtUptime(s) {
@@ -387,7 +395,7 @@ async function poll() {
 
     const tbody = document.getElementById('reqTable');
     tbody.innerHTML = (m.recent_requests || []).map(r =>
-      `<tr><td>${r.method}</td><td>${r.path}</td><td>${statusBadge(r.status)}</td><td>${r.latency_ms} ms</td></tr>`
+      `<tr><td>${escapeHtml(r.method)}</td><td>${escapeHtml(r.path)}</td><td>${statusBadge(r.status)}</td><td>${escapeHtml(r.latency_ms)} ms</td></tr>`
     ).join('');
 
     const logsWrap = document.getElementById('logsWrap');
@@ -395,7 +403,7 @@ async function poll() {
     logsWrap.innerHTML = logs.map(entry => {
       const ts = entry.timestamp ? entry.timestamp.split('T')[1]?.slice(0,8) || '' : '';
       const lvl = entry.level || 'INFO';
-      return `<div class="log-entry"><span class="log-ts">${ts}</span><span class="log-level ${lvl}">${lvl}</span><span class="log-msg">${entry.message || ''}</span></div>`;
+      return `<div class="log-entry"><span class="log-ts">${escapeHtml(ts)}</span><span class="log-level ${escapeHtml(lvl)}">${escapeHtml(lvl)}</span><span class="log-msg">${escapeHtml(entry.message || '')}</span></div>`;
     }).join('');
 
   } catch (e) {

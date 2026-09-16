@@ -220,7 +220,8 @@ def create_app():
             db.execute_sql("SELECT 1")
             checks["postgres"] = "ok"
         except Exception as exc:
-            checks["postgres"] = str(exc)
+            app.logger.warning(f"Readiness postgres check failed: {exc}")
+            checks["postgres"] = "unavailable"
 
         try:
             redis_client = get_l2()
@@ -229,14 +230,16 @@ def create_app():
             else:
                 checks["redis"] = "unavailable"
         except Exception as exc:
-            checks["redis"] = str(exc)
+            app.logger.warning(f"Readiness redis check failed: {exc}")
+            checks["redis"] = "unavailable"
 
         try:
             producer = get_producer()
             producer.list_topics(timeout=2)
             checks["kafka"] = "ok"
         except Exception as exc:
-            checks["kafka"] = str(exc)
+            app.logger.warning(f"Readiness kafka check failed: {exc}")
+            checks["kafka"] = "unavailable"
 
         ready = all(v == "ok" for v in checks.values())
         return jsonify(status="ok" if ready else "not_ready", checks=checks), (200 if ready else 503)
@@ -258,8 +261,7 @@ def create_app():
     @app.errorhandler(500)
     def internal_server_error(error):
         app.logger.exception("Internal server error")
-        _, exc, _ = sys.exc_info()
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(503)
     def service_unavailable(error):
