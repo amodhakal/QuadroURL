@@ -29,6 +29,7 @@ from app.cache import (
 from app.models.url import Url
 from app.utils.events import create_event
 from app.utils.kafka_producer import publish_url_create
+from app.utils.auth import require_auth
 from app.utils.ratelimit import rate_limit
 from app.utils.validation import (
     parse_expires_at,
@@ -168,6 +169,7 @@ def _idempotency_key(data):
 
 @urls_bp.route("/urls", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
+@require_auth
 def create_url():
     data = require_json("Invalid JSON received for create_url")
 
@@ -333,6 +335,7 @@ def _require_int_query_param(name):
 
 
 @urls_bp.route("/urls", methods=["GET"])
+@require_auth
 def list_urls():
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
@@ -414,6 +417,7 @@ def list_urls():
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
+@require_auth
 def get_url_cached(url_id):
     cached = get_url(url_id)
     if cached is not None:
@@ -434,6 +438,7 @@ def get_url_cached(url_id):
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
+@require_auth
 def update_url(url_id):
     try:
         url = Url.get_by_id(url_id)
@@ -504,6 +509,7 @@ def update_url(url_id):
 
 
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
+@require_auth
 def delete_url_endpoint(url_id):
     from app.database import db
 

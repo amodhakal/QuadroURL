@@ -7,6 +7,7 @@ os.environ.setdefault("KAFKA_SYNC_FALLBACK", "1")
 
 from app import create_app
 from app.database import db
+from app.models.api_key import ApiKey
 from app.models.user import User
 from app.models.url import Url
 from app.models.event import Event
@@ -19,7 +20,7 @@ def app():
     app.config["TESTING"] = True
 
     with app.app_context():
-        db.create_tables([User, Url, Event], safe=True)
+        db.create_tables([User, Url, Event, ApiKey], safe=True)
 
     yield app
 
@@ -37,6 +38,7 @@ def clean_tables(app):
     _kafka_check_cache["result"] = None
     _kafka_check_cache["at"] = 0.0
     with app.app_context():
+        db.execute_sql("DELETE FROM apikey")
         db.execute_sql("DELETE FROM event")
         db.execute_sql("DELETE FROM url")
         db.execute_sql('DELETE FROM "user"')
@@ -44,9 +46,32 @@ def clean_tables(app):
 
 
 @pytest.fixture()
-def client(app):
-    """A Flask test client for sending HTTP requests."""
-    return app.test_client()
+def seed_auth(app):
+    """Seed user + bearer key for the auto-authenticated test client (#99).
+
+    Runs after ``clean_tables`` (autouse fixtures execute first), so the
+    seed row is fresh for every test.
+    """
+    from types import SimpleNamespace
+
+    from app.utils.auth import issue_api_key
+
+    with app.app_context():
+        user = User.create(username="authseed", email="authseed@example.com")
+        _, raw = issue_api_key(user.id)
+        return SimpleNamespace(user=user, api_key=raw)
+
+
+@pytest.fixture()
+def client(app, seed_auth):
+    """A Flask test client sending the seed bearer key by default (#99).
+
+    Per-request ``headers``/``environ_overrides`` still win over the default,
+    so tests can present other keys (or none) by passing headers explicitly.
+    """
+    test_client = app.test_client()
+    test_client.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {seed_auth.api_key}"
+    return test_client
 
 
 @pytest.fixture()

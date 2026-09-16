@@ -12,6 +12,7 @@ from app.cache import (
 )
 from app.models.event import Event
 from app.utils.ratelimit import rate_limit
+from app.utils.auth import require_auth
 from app.utils.validation import (
     require_dict,
     require_int,
@@ -49,6 +50,7 @@ def _require_int_query_param(name):
 
 
 @events_bp.route("/events", methods=["GET"])
+@require_auth
 def list_events():
     offset = request.args.get("offset", 0, type=int)
     size = request.args.get("size", 20, type=int)
@@ -110,6 +112,7 @@ def list_events():
 
 @events_bp.route("/events", methods=["POST"])
 @rate_limit(capacity=300, refill_rate=5.0)
+@require_auth
 def create_event():
     data = require_json("Invalid JSON received for create_event")
 

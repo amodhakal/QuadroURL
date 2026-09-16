@@ -60,7 +60,9 @@ def test_list_users_empty(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["kind"] == "list"
-    assert data["sample"] == []
+    # The auto-auth seed user (conftest) is infrastructure, not fixture data.
+    rows = [u for u in data["sample"] if u["username"] != "authseed"]
+    assert rows == []
 
 
 def test_list_users_returns_users(client, sample_user):
@@ -68,11 +70,13 @@ def test_list_users_returns_users(client, sample_user):
     assert response.status_code == 200
     data = response.get_json()
     assert len(data["sample"]) >= 1
-    assert data["sample"][0]["username"] == "testuser"
+    by_name = {u["username"]: u for u in data["sample"]}
+    assert by_name["testuser"]["id"] == sample_user.id
 
 
 def test_list_users_pagination(client):
-    for i in range(5):
+    # 4 created + 1 authseed row = 5; last page is partial (proves it).
+    for i in range(4):
         client.post("/users", json={"username": f"user{i}", "email": f"user{i}@test.com"})
 
     response = client.get("/users?page=1&per_page=2")

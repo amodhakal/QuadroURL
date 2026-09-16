@@ -28,9 +28,9 @@ def init_db(app):
     )
     db.initialize(database)
 
-    from app.models import User, Url, Event, RequestLog
+    from app.models import User, Url, Event, RequestLog, ApiKey
 
-    db.create_tables([User, Url, Event, RequestLog], safe=True)
+    db.create_tables([User, Url, Event, RequestLog, ApiKey], safe=True)
 
     @app.before_request
     def _db_connect():
