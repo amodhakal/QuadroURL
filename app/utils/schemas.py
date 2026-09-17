@@ -1,7 +1,7 @@
 """Request contracts shared by legacy/v1 handlers and the OpenAPI document."""
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from app.utils.url_safety import validate_destination
 
 from flask import abort, request
@@ -86,6 +86,48 @@ class EventCreate(Body):
 
 class ApiKeyCreate(Body):
     name: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, max_length=255)] = ""
+
+
+class WebhookCreate(Body):
+    """Owner-scoped click-milestone subscription (#184); shape checked here (#191)."""
+
+    destination: Text
+    milestone: Annotated[StrictInt, Field(gt=0, le=2**63 - 1)]
+
+    @field_validator("destination")
+    @classmethod
+    def approved_destination(cls, value):
+        from shared.delivery_worker import validate_destination as approved
+
+        try:
+            approved(value)
+        except ValueError:
+            raise ValueError("Destination must be an operator-approved HTTPS URL")
+        return value
+
+
+class ReplayRequest(Body):
+    """Optional corrected JSON-object payload for a dead-letter replay."""
+
+    payload: dict | None = None
+
+
+class DeadLetterQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    after: int = Field(default=0, ge=0, le=2**63 - 1)
+
+
+class ExportQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    format: Literal["json", "csv"] = "json"
+    limit: int = Field(default=1000, ge=1, le=1000)
+    after_id: int = Field(default=0, ge=0, le=2**63 - 1)
+
+
+class AnalyticsQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bucket: Literal["day", "week", "month"] = "day"
+    days: int = Field(default=30, ge=1, le=365)
 
 
 class ListQuery(BaseModel):

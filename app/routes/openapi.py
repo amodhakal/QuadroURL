@@ -5,15 +5,20 @@ import re
 from flask import Blueprint, Response, current_app, jsonify
 
 from app.utils.schemas import (
+    AnalyticsQuery,
     ApiKeyCreate,
+    DeadLetterQuery,
     EventCreate,
     EventQuery,
+    ExportQuery,
     ListQuery,
+    ReplayRequest,
     UrlCreate,
     UrlQuery,
     UrlUpdate,
     UserCreate,
     UserUpdate,
+    WebhookCreate,
 )
 
 docs_bp = Blueprint("docs", __name__)
@@ -24,8 +29,15 @@ BODY_SCHEMAS = {
     ("urls", "PUT"): UrlUpdate,
     ("events", "POST"): EventCreate,
     ("auth", "POST"): ApiKeyCreate,
+    ("delivery", "POST"): WebhookCreate,
 }
-QUERY_SCHEMAS = {"users": ListQuery, "urls": UrlQuery, "events": EventQuery, "logs": ListQuery}
+QUERY_SCHEMAS = {
+    "users": ListQuery,
+    "urls": UrlQuery,
+    "events": EventQuery,
+    "logs": ListQuery,
+    "delivery": DeadLetterQuery,
+}
 
 
 def json_response(description, schema=None):
@@ -56,7 +68,13 @@ def build_spec():
         },
     }
     schemas = {"Error": error, "Page": page}
-    for model in set(BODY_SCHEMAS.values()):
+    for model in set(BODY_SCHEMAS.values()) | {
+        ReplayRequest,
+        AnalyticsQuery,
+        ExportQuery,
+        DeadLetterQuery,
+        WebhookCreate,
+    }:
         schemas[model.__name__] = model.model_json_schema()
     paths = {}
     for rule in current_app.url_map.iter_rules():
@@ -123,7 +141,15 @@ def build_spec():
                 operation["responses"]["200"] = json_response(
                     "Bounded page", {"$ref": "#/components/schemas/Page"}
                 )
+            elif method == "GET" and rule.endpoint.endswith(".click_analytics"):
+                for name, schema in AnalyticsQuery.model_json_schema()["properties"].items():
+                    parameters.append({"name": name, "in": "query", "schema": schema})
+            elif method == "GET" and rule.endpoint.endswith(".export_rows"):
+                for name, schema in ExportQuery.model_json_schema()["properties"].items():
+                    parameters.append({"name": name, "in": "query", "schema": schema})
             model = BODY_SCHEMAS.get((resource, method))
+            if path.endswith("/replay"):
+                model = ReplayRequest
             if path.endswith("/bulk"):
                 operation["requestBody"] = {
                     "required": True,

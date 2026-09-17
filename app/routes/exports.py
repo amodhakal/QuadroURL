@@ -3,11 +3,12 @@
 import csv
 import io
 
-from flask import Blueprint, Response, abort, jsonify, request
+from flask import Blueprint, Response, abort, jsonify
 
 from app.models import Event, Url, User
 from app.utils.auth import require_auth, scope_query
 from app.utils.ratelimit import rate_limit
+from app.utils.schemas import ExportQuery, parse_query
 
 exports_bp = Blueprint("exports", __name__)
 MAX_ROWS = 1000
@@ -36,17 +37,6 @@ FIELDS = {
 }
 
 
-def _integer(name, default, minimum, maximum):
-    raw = request.args.get(name, str(default))
-    try:
-        value = int(raw)
-    except (ValueError, TypeError):
-        abort(400, description=f"{name} must be an integer")
-    if not minimum <= value <= maximum:
-        abort(400, description=f"{name} must be between {minimum} and {maximum}")
-    return value
-
-
 def _serialize(value):
     return value.isoformat() if hasattr(value, "isoformat") else value
 
@@ -67,13 +57,10 @@ def _csv_cell(value):
 def export_rows(resource):
     if resource not in FIELDS:
         abort(404)
-    if set(request.args) - {"format", "limit", "after_id"}:
-        abort(400, description="Unknown export parameter")
-    output_format = request.args.get("format", "json")
-    if output_format not in {"json", "csv"}:
-        abort(400, description="format must be json or csv")
-    limit = _integer("limit", MAX_ROWS, 1, MAX_ROWS)
-    after_id = _integer("after_id", 0, 0, 2**63 - 1)
+    query = parse_query(ExportQuery)
+    output_format = query.format
+    limit = query.limit
+    after_id = query.after_id
     model, owner, fields = FIELDS[resource]
     rows = list(
         scope_query(model.select(), owner)
