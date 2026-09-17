@@ -3,8 +3,9 @@ import { test, expect } from "@playwright/test"
 const owner = { id: 1, username: "Alice", email: "alice@example.com", created_at: "2026-01-01" }
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/users**", route => route.fulfill({ json: { kind: "list", sample: [owner] } }))
-  await page.route("**/api/urls**", route => route.fulfill({ json: { kind: "list", sample: [] } }))
+  // Match API paths, not Vite's /src/api/*.ts module requests.
+  await page.route(url => url.pathname === "/api/users", route => route.fulfill({ json: { kind: "list", sample: [owner] } }))
+  await page.route(url => url.pathname === "/api/urls", route => route.fulfill({ json: { kind: "list", sample: [] } }))
 })
 
 test("creates a campaign link and displays safe local preview", async ({ page }) => {
@@ -24,6 +25,11 @@ test("creates a campaign link and displays safe local preview", async ({ page })
   await page.getByRole("option", { name: "Alice" }).click()
   await page.getByLabel("Add UTM parameters").check()
   await page.getByLabel("Source", { exact: true }).fill("email & partners")
+  const preview = page.getByRole("region", { name: "Destination preview" })
+  await expect(preview.getByText("Autumn campaign", { exact: true })).toBeVisible()
+  const destinationLink = preview.getByRole("link", { name: "Open destination" })
+  await expect(destinationLink).toHaveAttribute("href", "https://example.com/page?keep=1&utm_source=email+%26+partners")
+  await expect(destinationLink).toHaveAttribute("rel", "noopener noreferrer")
   await page.getByRole("button", { name: /shorten/i }).click()
   await expect(page.getByText("Short link created", { exact: true }).first()).toBeVisible()
   expect(submitted?.user_id).toBe(1)
@@ -38,9 +44,13 @@ test("rejects unsafe schemes before making a create request", async ({ page }) =
   page.on("request", request => { if (request.method() === "POST") writes++ })
   await page.goto("/")
   await page.getByLabel("Title", { exact: true }).fill("Invalid")
+  await page.getByRole("combobox").click()
+  await page.getByRole("option", { name: "Alice" }).click()
   await page.getByLabel("Original URL").fill("javascript:alert(1)")
   await page.getByRole("button", { name: /shorten/i }).click()
-  await expect(page.getByText("Enter an HTTP or HTTPS URL without embedded credentials")).toBeVisible()
+  // Exact match: the live LinkPreview fallback repeats this sentence with a suffix.
+  await expect(page.getByText("Enter an HTTP or HTTPS URL without embedded credentials", { exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Destination preview" }).getByRole("link")).toHaveCount(0)
   expect(writes).toBe(0)
 })
 
