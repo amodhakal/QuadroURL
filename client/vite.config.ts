@@ -7,6 +7,11 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   test: {
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    environment: 'jsdom',
+    setupFiles: ['./test/setup.ts'],
+    restoreMocks: true,
+    unstubGlobals: true,
+    unstubEnvs: true,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

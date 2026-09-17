@@ -42,7 +42,7 @@ jobs:
         working-directory: client
         run: pnpm lint
 
-  test:
+  server-test:
     runs-on: ubuntu-latest
 
     services:

@@ -19,6 +19,10 @@ describe("parseDestination", () => {
       "https://example.com\\@evil.com",
       "  https://example.com/with space",
       "",
+      "https://",
+      "https://[invalid]/",
+      "https://example.com/\u007fpath",
+      "https://:pass@example.com/",
     ]) {
       expect(parseDestination(value), value).toBeNull()
     }
