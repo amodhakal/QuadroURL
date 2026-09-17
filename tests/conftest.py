@@ -6,11 +6,10 @@ import pytest
 os.environ.setdefault("KAFKA_SYNC_FALLBACK", "1")
 
 from app import create_app
-from app.database import db
-from app.models.api_key import ApiKey
+from app.database import db, models
 from app.models.user import User
 from app.models.url import Url
-from app.models.event import Event
+from migrations_runner import upgrade
 
 
 @pytest.fixture(scope="session")
@@ -20,7 +19,8 @@ def app():
     app.config["TESTING"] = True
 
     with app.app_context():
-        db.create_tables([User, Url, Event, ApiKey], safe=True)
+        # Use the production migrations so new tables cannot be omitted here.
+        upgrade(db.obj, models)
 
     yield app
 
@@ -38,6 +38,17 @@ def clean_tables(app):
     _kafka_check_cache["result"] = None
     _kafka_check_cache["at"] = 0.0
     with app.app_context():
+        # Delete dependants first, including tables used by sync event delivery.
+        for table in (
+            "delivery",
+            "subscription",
+            "replay",
+            "receipt",
+            "deadletter",
+            "linkmetadata",
+            "requestlog",
+        ):
+            db.execute_sql(f'DELETE FROM "{table}"')
         db.execute_sql("DELETE FROM apikey")
         db.execute_sql("DELETE FROM event")
         db.execute_sql("DELETE FROM url")
@@ -75,11 +86,35 @@ def client(app, seed_auth):
 
 
 @pytest.fixture()
+def admin_client(app, client, seed_auth, monkeypatch):
+    """Explicit administrator client for cross-user and operator route tests.
+
+    ``auth.is_admin`` resolves ADMIN_USER_IDS from app config (falling back to
+    the environment), so pinning config here scopes admin rights to this test
+    instead of leaking them into sibling sessions via the process env.
+    """
+    monkeypatch.setitem(app.config, "ADMIN_USER_IDS", str(seed_auth.user.id))
+    return client
+
+
+@pytest.fixture()
 def sample_user(app):
     """Insert and return a single user for tests that need one."""
     with app.app_context():
         user = User.create(username="testuser", email="test@example.com")
         return user
+
+
+@pytest.fixture()
+def owner_client(app, sample_user):
+    """Ordinary client authenticated as the owner of sample_user/sample_url."""
+    from app.utils.auth import issue_api_key
+
+    with app.app_context():
+        _, raw = issue_api_key(sample_user.id)
+    test_client = app.test_client()
+    test_client.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {raw}"
+    return test_client
 
 
 @pytest.fixture()

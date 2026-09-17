@@ -448,9 +448,11 @@ def test_drain_request_logs_failure_returns_false(consumer_modules, monkeypatch)
     app_mod = consumer_modules.app
     db = _fake_db()
     monkeypatch.setattr(app_mod, "db", db)
-    insert_mock = MagicMock(name="insert_many")
-    insert_mock.return_value.execute.side_effect = RuntimeError("db down")
-    monkeypatch.setattr(app_mod.RequestLog, "insert_many", insert_mock)
+    # persist_rows writes via model.create inside a receipt-guarded savepoint;
+    # an outage there must propagate so drain returns False (no offset commit).
+    monkeypatch.setattr(
+        app_mod.RequestLog, "create", MagicMock(side_effect=RuntimeError("db down"))
+    )
     assert app_mod.drain_request_logs([({"method": "GET"}, _kafka_msg())]) is False
     db.close.assert_called_once_with()
 

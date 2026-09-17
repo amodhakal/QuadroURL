@@ -8,8 +8,8 @@ from app.utils.events import flush_events
 # ---------------------------------------------------------------------------
 
 
-def test_create_url(client, sample_user):
-    response = client.post(
+def test_create_url(owner_client, sample_user):
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -27,10 +27,10 @@ def test_create_url(client, sample_user):
     assert len(data["short_code"]) == 6
 
 
-def test_create_url_generates_unique_short_codes(client, sample_user):
+def test_create_url_generates_unique_short_codes(owner_client, sample_user):
     codes = set()
     for i in range(5):
-        resp = client.post(
+        resp = owner_client.post(
             "/urls",
             json={
                 "user_id": sample_user.id,
@@ -43,19 +43,20 @@ def test_create_url_generates_unique_short_codes(client, sample_user):
     assert len(codes) == 5
 
 
-def test_create_url_missing_user_id(client):
-    response = client.post(
+def test_create_url_missing_user_id_defaults_to_actor(owner_client, sample_user):
+    response = owner_client.post(
         "/urls",
         json={
             "original_url": "https://example.com",
             "title": "No user",
         },
     )
-    assert response.status_code == 400
+    assert response.status_code == 201
+    assert response.get_json()["user_id"] == sample_user.id
 
 
-def test_create_url_missing_original_url(client, sample_user):
-    response = client.post(
+def test_create_url_missing_original_url(owner_client, sample_user):
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -65,8 +66,8 @@ def test_create_url_missing_original_url(client, sample_user):
     assert response.status_code == 400
 
 
-def test_create_url_missing_title(client, sample_user):
-    response = client.post(
+def test_create_url_missing_title(owner_client, sample_user):
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -76,8 +77,8 @@ def test_create_url_missing_title(client, sample_user):
     assert response.status_code == 400
 
 
-def test_create_url_invalid_user_id_type(client):
-    response = client.post(
+def test_create_url_invalid_user_id_type(owner_client):
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": "not_an_int",
@@ -88,8 +89,8 @@ def test_create_url_invalid_user_id_type(client):
     assert response.status_code == 400
 
 
-def test_create_url_nonexistent_user(client):
-    response = client.post(
+def test_admin_create_url_nonexistent_user(admin_client):
+    response = admin_client.post(
         "/urls",
         json={
             "user_id": 99999,
@@ -100,13 +101,13 @@ def test_create_url_nonexistent_user(client):
     assert response.status_code == 400
 
 
-def test_create_url_empty_body(client):
-    response = client.post("/urls", data="", content_type="application/json")
+def test_create_url_empty_body(owner_client):
+    response = owner_client.post("/urls", data="", content_type="application/json")
     assert response.status_code == 400
 
 
-def test_create_url_records_event(client, sample_user):
-    client.post(
+def test_create_url_records_event(owner_client, sample_user):
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -115,7 +116,7 @@ def test_create_url_records_event(client, sample_user):
         },
     )
     flush_events()
-    events_resp = client.get("/events")
+    events_resp = owner_client.get("/events")
     events = events_resp.get_json()
     assert len(events) >= 1
     assert events[-1]["event_type"] == "created"
@@ -126,33 +127,35 @@ def test_create_url_records_event(client, sample_user):
 # ---------------------------------------------------------------------------
 
 
-def test_list_urls_empty(client):
-    response = client.get("/urls")
+def test_list_urls_empty(owner_client):
+    response = owner_client.get("/urls")
     assert response.status_code == 200
     data = response.get_json()
     assert data["kind"] == "list"
     assert data["sample"] == []
 
 
-def test_list_urls_returns_urls(client, sample_url):
-    response = client.get("/urls")
+def test_list_urls_returns_urls(owner_client, sample_url):
+    response = owner_client.get("/urls")
     assert response.status_code == 200
     data = response.get_json()
     assert len(data["sample"]) >= 1
     assert data["sample"][0]["short_code"] == "abc123"
 
 
-def test_list_urls_filter_by_user_id(client, sample_url, sample_user):
-    response = client.get(f"/urls?user_id={sample_user.id}")
+def test_list_urls_filter_by_user_id(owner_client, sample_url, sample_user):
+    response = owner_client.get(f"/urls?user_id={sample_user.id}")
     assert response.status_code == 200
     data = response.get_json()
+    assert len(data["sample"]) == 1
     assert all(u["user_id"] == sample_user.id for u in data["sample"])
 
 
-def test_list_urls_filter_by_is_active(client, sample_url):
-    response = client.get("/urls?is_active=true")
+def test_list_urls_filter_by_is_active(owner_client, sample_url):
+    response = owner_client.get("/urls?is_active=true")
     assert response.status_code == 200
     data = response.get_json()
+    assert len(data["sample"]) == 1
     assert all(u["is_active"] is True for u in data["sample"])
 
 
@@ -161,16 +164,16 @@ def test_list_urls_filter_by_is_active(client, sample_url):
 # ---------------------------------------------------------------------------
 
 
-def test_get_url_by_id(client, sample_url):
-    response = client.get(f"/urls/{sample_url.id}")
+def test_get_url_by_id(owner_client, sample_url):
+    response = owner_client.get(f"/urls/{sample_url.id}")
     assert response.status_code == 200
     data = response.get_json()
     assert data["id"] == sample_url.id
     assert data["short_code"] == "abc123"
 
 
-def test_get_url_not_found(client):
-    response = client.get("/urls/99999")
+def test_get_url_not_found(owner_client):
+    response = owner_client.get("/urls/99999")
     assert response.status_code == 404
 
 
@@ -179,38 +182,38 @@ def test_get_url_not_found(client):
 # ---------------------------------------------------------------------------
 
 
-def test_update_url_title(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", json={"title": "New Title"})
+def test_update_url_title(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", json={"title": "New Title"})
     assert response.status_code == 200
     assert response.get_json()["title"] == "New Title"
 
 
-def test_update_url_deactivate(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", json={"is_active": False})
+def test_update_url_deactivate(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", json={"is_active": False})
     assert response.status_code == 200
     assert response.get_json()["is_active"] is False
 
 
-def test_update_url_not_found(client):
-    response = client.put("/urls/99999", json={"title": "Ghost"})
+def test_update_url_not_found(owner_client):
+    response = owner_client.put("/urls/99999", json={"title": "Ghost"})
     assert response.status_code == 404
 
 
-def test_update_url_no_body(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", data="", content_type="application/json")
+def test_update_url_no_body(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", data="", content_type="application/json")
     assert response.status_code == 400
 
 
-def test_update_url_records_event(client, sample_url):
-    client.put(f"/urls/{sample_url.id}", json={"title": "Changed"})
+def test_update_url_records_event(owner_client, sample_url):
+    owner_client.put(f"/urls/{sample_url.id}", json={"title": "Changed"})
     flush_events()
-    events_resp = client.get("/events")
+    events_resp = owner_client.get("/events")
     events = events_resp.get_json()
     updated_events = [e for e in events if e["event_type"] == "updated"]
     assert len(updated_events) >= 1
 
 
-def test_create_url_short_code_collision_returns_500(app, client, sample_user, monkeypatch):
+def test_create_url_short_code_collision_returns_500(app, owner_client, sample_user, monkeypatch):
     """Exhausting short-code retries should return a 500 JSON error."""
     import app.routes.urls as urls_module
     from peewee import IntegrityError
@@ -221,7 +224,7 @@ def test_create_url_short_code_collision_returns_500(app, client, sample_user, m
         raise IntegrityError("Unique constraint violated")
 
     monkeypatch.setattr(urls_module.Url, "create", always_collide)
-    response = client.post(
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -233,8 +236,8 @@ def test_create_url_short_code_collision_returns_500(app, client, sample_user, m
     assert "unique short code" in response.get_json().get("error", "")
 
 
-def test_list_urls_filter_by_id(client, sample_user):
-    r1 = client.post(
+def test_list_urls_filter_by_id(owner_client, sample_user):
+    r1 = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -242,7 +245,7 @@ def test_list_urls_filter_by_id(client, sample_user):
             "title": "One",
         },
     )
-    r2 = client.post(
+    r2 = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -253,15 +256,15 @@ def test_list_urls_filter_by_id(client, sample_user):
     id1 = r1.get_json()["id"]
     id2 = r2.get_json()["id"]
     assert id1 != id2
-    response = client.get(f"/urls?id={id1}")
+    response = owner_client.get(f"/urls?id={id1}")
     assert response.status_code == 200
     sample = response.get_json()["sample"]
     assert len(sample) == 1
     assert sample[0]["id"] == id1
 
 
-def test_list_urls_filter_by_short_code(client, sample_user):
-    client.post(
+def test_list_urls_filter_by_short_code(owner_client, sample_user):
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -269,7 +272,7 @@ def test_list_urls_filter_by_short_code(client, sample_user):
             "title": "A",
         },
     )
-    r2 = client.post(
+    r2 = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -278,15 +281,15 @@ def test_list_urls_filter_by_short_code(client, sample_user):
         },
     )
     code = r2.get_json()["short_code"]
-    response = client.get(f"/urls?short_code={code}")
+    response = owner_client.get(f"/urls?short_code={code}")
     assert response.status_code == 200
     sample = response.get_json()["sample"]
     assert len(sample) == 1
     assert sample[0]["short_code"] == code
 
 
-def test_list_urls_filter_by_original_url(client, sample_user):
-    client.post(
+def test_list_urls_filter_by_original_url(owner_client, sample_user):
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -294,7 +297,7 @@ def test_list_urls_filter_by_original_url(client, sample_user):
             "title": "Match",
         },
     )
-    client.post(
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -302,14 +305,14 @@ def test_list_urls_filter_by_original_url(client, sample_user):
             "title": "Other",
         },
     )
-    response = client.get("/urls?original_url=https://example.com/match")
+    response = owner_client.get("/urls?original_url=https://example.com/match")
     assert response.status_code == 200
     sample = response.get_json()["sample"]
     assert len(sample) == 1
     assert sample[0]["original_url"] == "https://example.com/match"
 
 
-def test_get_url_unexpected_exception_returns_500(app, client, monkeypatch):
+def test_get_url_unexpected_exception_returns_500(app, owner_client, sample_url, monkeypatch):
     import app.routes.urls as urls_module
 
     monkeypatch.setitem(app.config, "PROPAGATE_EXCEPTIONS", False)
@@ -317,27 +320,27 @@ def test_get_url_unexpected_exception_returns_500(app, client, monkeypatch):
     monkeypatch.setattr(
         urls_module.Url, "get_by_id", lambda url_id: (_ for _ in ()).throw(RuntimeError("boom"))
     )
-    response = client.get("/urls/1")
+    response = owner_client.get(f"/urls/{sample_url.id}")
     assert response.status_code == 500
     assert "Internal server error" in response.get_json().get("error", "")
 
 
-def test_delete_url_existing(client, sample_url):
-    response = client.delete(f"/urls/{sample_url.id}")
+def test_delete_url_existing(owner_client, sample_url):
+    response = owner_client.delete(f"/urls/{sample_url.id}")
     assert response.status_code == 200
     assert response.get_json() == {}
-    remaining = client.get("/urls").get_json()["sample"]
+    remaining = owner_client.get("/urls").get_json()["sample"]
     assert all(u["id"] != sample_url.id for u in remaining)
 
 
-def test_delete_url_nonexistent(client):
-    response = client.delete("/urls/99999")
+def test_delete_url_nonexistent(owner_client):
+    response = owner_client.delete("/urls/99999")
     assert response.status_code == 200
     assert response.get_json() == {}
 
 
-def test_redirect_short_code_success(client, sample_user):
-    resp = client.post(
+def test_redirect_short_code_success(owner_client, sample_user):
+    resp = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -346,20 +349,20 @@ def test_redirect_short_code_success(client, sample_user):
         },
     )
     short_code = resp.get_json()["short_code"]
-    response = client.get(f"/urls/{short_code}/redirect")
+    response = owner_client.get(f"/urls/{short_code}/redirect")
     assert response.status_code == 302
     assert response.headers["Location"] == "https://example.com/redirect-me"
 
     flush_events()
-    events = client.get("/events").get_json()
+    events = owner_client.get("/events").get_json()
     clicks = [e for e in events if e["event_type"] == "click"]
     assert len(clicks) == 1
     assert clicks[0]["url_id"] == resp.get_json()["id"]
 
 
-def test_legacy_redirect_success(client, sample_user):
+def test_legacy_redirect_success(owner_client, sample_user):
     original = "https://example.com/legacy"
-    resp = client.post(
+    resp = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -368,19 +371,19 @@ def test_legacy_redirect_success(client, sample_user):
         },
     )
     short_code = resp.get_json()["short_code"]
-    response = client.get(f"/r/{short_code}")
+    response = owner_client.get(f"/r/{short_code}")
     assert response.status_code == 200
     data = response.get_json()
     assert data["url"] == original
     assert data["short_code"] == short_code
 
     flush_events()
-    events = client.get("/events").get_json()
+    events = owner_client.get("/events").get_json()
     clicks = [e for e in events if e["event_type"] == "click"]
     assert len(clicks) == 1
 
 
-def test_get_url_db_fetch_populates_cache(app, client, sample_user):
+def test_get_url_db_fetch_populates_cache(app, owner_client, sample_user):
     """GET /urls/<id> for a URL not present in cache should fetch it from the
     DB, populate the cache, and return it (covers lines 176-179)."""
     from app.models.url import Url
@@ -401,19 +404,19 @@ def test_get_url_db_fetch_populates_cache(app, client, sample_user):
     if r:
         r.delete(f"url:{url.id}")
 
-    response = client.get(f"/urls/{url.id}")
+    response = owner_client.get(f"/urls/{url.id}")
     assert response.status_code == 200
     data = response.get_json()
     assert data["id"] == url.id
     assert data["short_code"] == "dbft01"
 
 
-def test_legacy_redirect_not_found(client):
-    response = client.get("/r/NOPE01")
+def test_legacy_redirect_not_found(owner_client):
+    response = owner_client.get("/r/NOPE01")
     assert response.status_code == 404
 
 
-def test_legacy_redirect_inactive(app, client, sample_user):
+def test_legacy_redirect_inactive(app, owner_client, sample_user):
     from app.models.url import Url
 
     with app.app_context():
@@ -425,16 +428,41 @@ def test_legacy_redirect_inactive(app, client, sample_user):
             is_active=False,
         )
 
-    response = client.get("/r/lgyi01")
+    response = owner_client.get("/r/lgyi01")
     assert response.status_code == 404
 
 
-def test_get_url_cached_db_fetch_when_cache_misses(app, client, sample_url, monkeypatch):
+def test_get_url_cached_db_fetch_when_cache_misses(app, owner_client, sample_url, monkeypatch):
     """When the cache layer returns None for an existing URL, get_url_cached
     falls through to Url.get_by_id and returns from the DB (lines 176-179)."""
     import app.routes.urls as urls_module
 
     monkeypatch.setattr(urls_module, "get_url", lambda url_id: None)
-    response = client.get(f"/urls/{sample_url.id}")
+    response = owner_client.get(f"/urls/{sample_url.id}")
     assert response.status_code == 200
     assert response.get_json()["id"] == sample_url.id
+
+
+def test_foreign_actor_cannot_access_owner_url(client, owner_client, sample_url, sample_user):
+    """Owner-populated caches must not grant access to a different actor."""
+    assert owner_client.get(f"/urls/{sample_url.id}").status_code == 200
+    assert owner_client.get("/urls").get_json()["sample"]
+
+    assert client.get(f"/urls/{sample_url.id}").status_code == 404
+    assert client.put(f"/urls/{sample_url.id}", json={"title": "Foreign"}).status_code == 404
+    assert client.delete(f"/urls/{sample_url.id}").status_code == 404
+    assert client.get("/urls").get_json()["sample"] == []
+    assert client.get(f"/urls?user_id={sample_user.id}").get_json()["sample"] == []
+    assert owner_client.get(f"/urls/{sample_url.id}").get_json()["title"] == "Example"
+
+
+def test_create_url_for_foreign_user_is_hidden(client, sample_user):
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com/foreign",
+            "title": "Foreign",
+        },
+    )
+    assert response.status_code == 404

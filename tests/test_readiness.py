@@ -118,10 +118,10 @@ def test_health_does_not_touch_db(client, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_create_url_returns_202_with_request_id_when_async(client, sample_user, monkeypatch):
+def test_create_url_returns_202_with_request_id_when_async(owner_client, sample_user, monkeypatch):
     monkeypatch.setenv("KAFKA_SYNC_FALLBACK", "0")
 
-    response = client.post(
+    response = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -135,7 +135,7 @@ def test_create_url_returns_202_with_request_id_when_async(client, sample_user, 
     assert "request_id" in data
 
 
-def test_url_status_returns_503_when_status_store_down(client, sample_user, monkeypatch):
+def test_url_status_returns_503_when_status_store_down(owner_client, sample_user, monkeypatch):
     monkeypatch.setenv("KAFKA_SYNC_FALLBACK", "0")
 
     import app.cache as cache
@@ -147,7 +147,9 @@ def test_url_status_returns_503_when_status_store_down(client, sample_user, monk
     # get_url_status resolves get_l2 from app.cache at call time.
     monkeypatch.setattr(cache, "get_l2", lambda: DownClient())
 
-    response = client.get("/urls/whatever/status")
+    # Status IDs must be owned by the caller (or admin) or they 404 before
+    # the status store is even consulted.
+    response = owner_client.get(f"/urls/u{sample_user.id}:probe/status")
     assert response.status_code == 503
     assert response.is_json
 

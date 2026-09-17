@@ -1,8 +1,8 @@
-"""Tests for app/utils/validation.py shared helpers (issue #150).
+"""Legacy validation helpers and schema-first route validation contracts.
 
-Pins helper behavior, the bool-vs-int contract (``bool`` is a subclass of
-``int`` and the pre-existing ``isinstance(x, int)`` checks accept ``True``),
-and route-level regressions proving messages/status codes are unchanged.
+The helpers retain their original messages and bool-vs-int behavior (#150).
+Routes now use Pydantic schemas (#191): strict positive IDs, field-prefixed
+errors, and pagination sizes up to 200 rather than the helpers' limit of 100.
 """
 
 import pytest
@@ -82,7 +82,7 @@ def test_require_non_empty_str(app):
 
 
 def test_require_str_allows_whitespace_only(app):
-    """urls create / events event_type use a truthiness check, no blank check."""
+    """The legacy helper checks truthiness without stripping whitespace."""
     with app.test_request_context("/"):
         assert require_str("   ", "title must be a string") == "   "
         for bad in ("", None, 123, False):
@@ -168,32 +168,51 @@ def test_require_json(app):
 
 
 # ---------------------------------------------------------------------------
-# Route-level regressions: messages/status unchanged after helper migration
+# Route-level regressions: Pydantic schema messages and constraints
 # ---------------------------------------------------------------------------
 
 
-def test_route_users_pagination_messages(client):
-    r = client.get("/users?page=0")
+@pytest.mark.parametrize(
+    "query,message",
+    [
+        ("page=0", "page: Input should be greater than or equal to 1"),
+        ("per_page=0", "per_page: Input should be greater than or equal to 1"),
+        ("per_page=201", "per_page: Input should be less than or equal to 200"),
+    ],
+)
+def test_route_users_pagination_messages(client, query, message):
+    r = client.get(f"/users?{query}")
     assert r.status_code == 400
-    assert r.get_json()["error"] == "page must be >= 1"
-    r = client.get("/users?per_page=101")
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "per_page must be between 1 and 100"
+    assert r.get_json()["error"] == message
 
 
-def test_route_urls_events_pagination_messages(client):
-    r = client.get("/urls?offset=-1")
+@pytest.mark.parametrize("route", ["/urls", "/events"])
+@pytest.mark.parametrize(
+    "query,message",
+    [
+        ("offset=-1", "offset: Input should be greater than or equal to 0"),
+        ("size=0", "size: Input should be greater than or equal to 1"),
+        ("size=201", "size: Input should be less than or equal to 200"),
+    ],
+)
+def test_route_urls_events_pagination_messages(client, route, query, message):
+    r = client.get(f"{route}?{query}")
     assert r.status_code == 400
-    assert r.get_json()["error"] == "offset must be >= 0"
-    r = client.get("/urls?size=101")
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "size must be between 1 and 100"
-    r = client.get("/events?offset=-1")
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "offset must be >= 0"
-    r = client.get("/events?size=0")
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "size must be between 1 and 100"
+    assert r.get_json()["error"] == message
+
+
+@pytest.mark.parametrize("size", [101, 200])
+@pytest.mark.parametrize(
+    "route,param", [("/users", "per_page"), ("/urls", "size"), ("/events", "size")]
+)
+def test_route_pagination_accepts_schema_limit(client, route, param, size):
+    """Routes must not retain the legacy helpers' upper bound of 100."""
+    r = client.get(f"{route}?{param}={size}")
+    assert r.status_code == 200
+    payload = r.get_json()
+    items = payload if route == "/events" else payload["sample"]
+    assert isinstance(items, list)
+    assert len(items) <= size
 
 
 def test_route_create_user_messages(client):
@@ -202,65 +221,75 @@ def test_route_create_user_messages(client):
     assert r.get_json()["error"] == "Invalid JSON"
     r = client.post("/users", json={"username": "   ", "email": "a@b.com"})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "username must be a non-empty string"
+    assert r.get_json()["error"] == "username: String should have at least 1 character"
     r = client.post(
         "/users",
         json={"username": "extra", "email": "extra@test.com", "role": "admin"},
     )
     assert r.status_code == 400
-    assert r.get_json()["error"] == "Unknown fields: ['role']"
+    assert r.get_json()["error"] == "role: Extra inputs are not permitted"
 
 
-def test_route_update_user_unknown_fields(client, sample_user):
-    r = client.put(f"/users/{sample_user.id}", json={"username": "ok", "role": "x"})
+def test_route_update_user_unknown_fields(owner_client, sample_user):
+    r = owner_client.put(f"/users/{sample_user.id}", json={"username": "ok", "role": "x"})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "Unknown fields: ['role']"
+    assert r.get_json()["error"] == "role: Extra inputs are not permitted"
 
 
-def test_route_url_bool_user_id_passes_int_check(client):
-    """True is accepted by the int check, so it falls through to User lookup."""
+@pytest.mark.parametrize("user_id", [True, False, "1", 1.5])
+def test_route_url_user_id_requires_strict_int(client, user_id):
+    """Unlike require_int, the schema rejects bools before ownership/lookup."""
     r = client.post(
         "/urls",
-        json={"user_id": True, "original_url": "https://x.com", "title": "T"},
+        json={"user_id": user_id, "original_url": "https://x.com", "title": "T"},
     )
     assert r.status_code == 400
-    assert r.get_json()["error"] == "User not found"
+    assert r.get_json()["error"] == "user_id: Input should be a valid integer"
+
+
+@pytest.mark.parametrize("user_id", [0, -1])
+def test_route_url_user_id_requires_positive_int(client, user_id):
     r = client.post(
         "/urls",
-        json={"user_id": False, "original_url": "https://x.com", "title": "T"},
+        json={"user_id": user_id, "original_url": "https://x.com", "title": "T"},
     )
     assert r.status_code == 400
-    assert r.get_json()["error"] == "user_id must be an integer"
+    assert r.get_json()["error"] == "user_id: Input should be greater than 0"
 
 
-def test_route_update_url_messages(client, sample_url):
-    r = client.put(f"/urls/{sample_url.id}", json={"title": "   "})
+def test_route_update_url_messages(owner_client, sample_url):
+    r = owner_client.put(f"/urls/{sample_url.id}", json={"title": "   "})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "title must be a non-empty string"
-    r = client.put(f"/urls/{sample_url.id}", json={"is_active": "yes"})
+    assert r.get_json()["error"] == "title: String should have at least 1 character"
+    r = owner_client.put(f"/urls/{sample_url.id}", json={"is_active": "yes"})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "is_active must be a boolean"
-    r = client.put(f"/urls/{sample_url.id}", json={"bogus": 1})
+    assert r.get_json()["error"] == "is_active: Input should be a valid boolean"
+    r = owner_client.put(f"/urls/{sample_url.id}", json={"bogus": 1})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "Unknown fields: ['bogus']"
+    assert r.get_json()["error"] == "bogus: Extra inputs are not permitted"
 
 
-def test_route_create_event_messages(client, sample_url, sample_user):
-    r = client.post(
+@pytest.mark.parametrize(
+    "overrides,message",
+    [
+        ({"details": []}, "details: Input should be a valid dictionary"),
+        ({"url_id": True}, "url_id: Input should be a valid integer"),
+        ({"url_id": False}, "url_id: Input should be a valid integer"),
+        ({"url_id": 1.5}, "url_id: Input should be a valid integer"),
+        ({"url_id": 0}, "url_id: Input should be greater than 0"),
+        ({"event_type": "   "}, "event_type: String should have at least 1 character"),
+    ],
+)
+def test_route_create_event_messages(owner_client, sample_url, sample_user, overrides, message):
+    """Invalid shapes fail schema validation, not URL lookup or ownership."""
+    r = owner_client.post(
         "/events",
         json={
             "url_id": sample_url.id,
             "user_id": sample_user.id,
             "event_type": "click",
-            "details": [],
+            **overrides,
         },
     )
     assert r.status_code == 400
-    assert r.get_json()["error"] == "details must be an object"
-    # True passes the int check -> falls through to URL lookup failure.
-    r = client.post("/events", json={"url_id": True, "user_id": sample_user.id, "event_type": "c"})
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "URL not found"
-    r = client.post("/events", json={"url_id": 1.5, "user_id": sample_user.id, "event_type": "c"})
-    assert r.status_code == 400
-    assert r.get_json()["error"] == "url_id must be an integer"
+    assert r.get_json()["error"] == message

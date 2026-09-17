@@ -137,13 +137,17 @@ def test_update_user_nonexistent(client):
     assert_clean_json_error(response, 404)
 
 
-def test_update_user_empty_json(client, sample_user):
-    response = client.put(f"/users/{sample_user.id}", data="", content_type="application/json")
+def test_update_user_empty_json(owner_client, sample_user):
+    response = owner_client.put(
+        f"/users/{sample_user.id}", data="", content_type="application/json"
+    )
     assert_clean_json_error(response, 400)
 
 
-def test_update_user_malformed_json(client, sample_user):
-    response = client.put(f"/users/{sample_user.id}", data="{bad", content_type="application/json")
+def test_update_user_malformed_json(owner_client, sample_user):
+    response = owner_client.put(
+        f"/users/{sample_user.id}", data="{bad", content_type="application/json"
+    )
     assert_clean_json_error(response, 400)
 
 
@@ -152,24 +156,28 @@ def test_update_user_malformed_json(client, sample_user):
 # ---------------------------------------------------------------------------
 
 
-def test_bulk_import_no_file_field(client):
-    response = client.post("/users/bulk", content_type="multipart/form-data")
+def test_bulk_import_no_file_field(admin_client):
+    response = admin_client.post("/users/bulk", content_type="multipart/form-data")
     assert_clean_json_error(response, 400)
 
 
-def test_bulk_import_non_csv_file(client):
+def test_bulk_import_non_csv_file(admin_client):
     import io
 
     bad = (io.BytesIO(b"not,csv"), "data.txt")
-    response = client.post("/users/bulk", data={"file": bad}, content_type="multipart/form-data")
+    response = admin_client.post(
+        "/users/bulk", data={"file": bad}, content_type="multipart/form-data"
+    )
     assert_clean_json_error(response, 400)
 
 
-def test_bulk_import_empty_csv(client):
+def test_bulk_import_empty_csv(admin_client):
     import io
 
     empty = (io.BytesIO(b"username,email,created_at\n"), "empty.csv")
-    response = client.post("/users/bulk", data={"file": empty}, content_type="multipart/form-data")
+    response = admin_client.post(
+        "/users/bulk", data={"file": empty}, content_type="multipart/form-data"
+    )
     assert response.status_code == 200
     assert response.content_type == "application/json"
     assert response.get_json()["imported"] == 0
@@ -211,29 +219,29 @@ def test_create_url_null_user_id(client):
     assert_clean_json_error(response, 400)
 
 
-def test_create_url_nonexistent_user(client):
-    response = client.post(
+def test_create_url_nonexistent_user(admin_client):
+    response = admin_client.post(
         "/urls", json={"user_id": 99999, "original_url": "https://x.com", "title": "T"}
     )
     assert_clean_json_error(response, 400)
 
 
-def test_create_url_integer_original_url(client, sample_user):
-    response = client.post(
+def test_create_url_integer_original_url(owner_client, sample_user):
+    response = owner_client.post(
         "/urls", json={"user_id": sample_user.id, "original_url": 12345, "title": "T"}
     )
     assert_clean_json_error(response, 400)
 
 
-def test_create_url_integer_title(client, sample_user):
-    response = client.post(
+def test_create_url_integer_title(owner_client, sample_user):
+    response = owner_client.post(
         "/urls", json={"user_id": sample_user.id, "original_url": "https://x.com", "title": 999}
     )
     assert_clean_json_error(response, 400)
 
 
-def test_create_url_empty_strings(client, sample_user):
-    response = client.post(
+def test_create_url_empty_strings(owner_client, sample_user):
+    response = owner_client.post(
         "/urls", json={"user_id": sample_user.id, "original_url": "", "title": ""}
     )
     assert_clean_json_error(response, 400)
@@ -269,13 +277,15 @@ def test_update_url_nonexistent(client):
     assert_clean_json_error(response, 404)
 
 
-def test_update_url_empty_json(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", data="", content_type="application/json")
+def test_update_url_empty_json(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", data="", content_type="application/json")
     assert_clean_json_error(response, 400)
 
 
-def test_update_url_malformed_json(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", data="{{bad", content_type="application/json")
+def test_update_url_malformed_json(owner_client, sample_url):
+    response = owner_client.put(
+        f"/urls/{sample_url.id}", data="{{bad", content_type="application/json"
+    )
     assert_clean_json_error(response, 400)
 
 
@@ -329,15 +339,16 @@ def test_create_event_missing_event_type(client):
     assert_clean_json_error(response, 400)
 
 
-def test_create_event_nonexistent_url(client, sample_user):
-    response = client.post(
+def test_create_event_nonexistent_url(owner_client, sample_user):
+    response = owner_client.post(
         "/events", json={"url_id": 99999, "user_id": sample_user.id, "event_type": "click"}
     )
-    assert_clean_json_error(response, 400)
+    # Missing URLs use the same 404 response as inaccessible URLs.
+    assert_clean_json_error(response, 404)
 
 
-def test_create_event_nonexistent_user(client, sample_url):
-    response = client.post(
+def test_create_event_nonexistent_user(admin_client, sample_url):
+    response = admin_client.post(
         "/events", json={"url_id": sample_url.id, "user_id": 99999, "event_type": "click"}
     )
     assert_clean_json_error(response, 400)

@@ -55,8 +55,8 @@ def test_create_user_duplicate_email(client, sample_user):
 # ---------------------------------------------------------------------------
 
 
-def test_list_users_empty(client):
-    response = client.get("/users")
+def test_list_users_empty(admin_client):
+    response = admin_client.get("/users")
     assert response.status_code == 200
     data = response.get_json()
     assert data["kind"] == "list"
@@ -65,8 +65,8 @@ def test_list_users_empty(client):
     assert rows == []
 
 
-def test_list_users_returns_users(client, sample_user):
-    response = client.get("/users")
+def test_list_users_returns_users(admin_client, sample_user):
+    response = admin_client.get("/users")
     assert response.status_code == 200
     data = response.get_json()
     assert len(data["sample"]) >= 1
@@ -74,17 +74,17 @@ def test_list_users_returns_users(client, sample_user):
     assert by_name["testuser"]["id"] == sample_user.id
 
 
-def test_list_users_pagination(client):
+def test_list_users_pagination(admin_client):
     # 4 created + 1 authseed row = 5; last page is partial (proves it).
     for i in range(4):
-        client.post("/users", json={"username": f"user{i}", "email": f"user{i}@test.com"})
+        admin_client.post("/users", json={"username": f"user{i}", "email": f"user{i}@test.com"})
 
-    response = client.get("/users?page=1&per_page=2")
+    response = admin_client.get("/users?page=1&per_page=2")
     assert response.status_code == 200
     data = response.get_json()
     assert len(data["sample"]) == 2
 
-    response = client.get("/users?page=3&per_page=2")
+    response = admin_client.get("/users?page=3&per_page=2")
     data = response.get_json()
     assert len(data["sample"]) == 1
 
@@ -94,8 +94,8 @@ def test_list_users_pagination(client):
 # ---------------------------------------------------------------------------
 
 
-def test_get_user_by_id(client, sample_user):
-    response = client.get(f"/users/{sample_user.id}")
+def test_get_user_by_id(owner_client, sample_user):
+    response = owner_client.get(f"/users/{sample_user.id}")
     assert response.status_code == 200
     data = response.get_json()
     assert data["id"] == sample_user.id
@@ -112,15 +112,15 @@ def test_get_user_not_found(client):
 # ---------------------------------------------------------------------------
 
 
-def test_update_user_username(client, sample_user):
-    response = client.put(f"/users/{sample_user.id}", json={"username": "updated_name"})
+def test_update_user_username(owner_client, sample_user):
+    response = owner_client.put(f"/users/{sample_user.id}", json={"username": "updated_name"})
     assert response.status_code == 200
     data = response.get_json()
     assert data["username"] == "updated_name"
 
 
-def test_update_user_email(client, sample_user):
-    response = client.put(f"/users/{sample_user.id}", json={"email": "updated@example.com"})
+def test_update_user_email(owner_client, sample_user):
+    response = owner_client.put(f"/users/{sample_user.id}", json={"email": "updated@example.com"})
     assert response.status_code == 200
     assert response.get_json()["email"] == "updated@example.com"
 
@@ -130,8 +130,10 @@ def test_update_user_not_found(client):
     assert response.status_code == 404
 
 
-def test_update_user_no_body(client, sample_user):
-    response = client.put(f"/users/{sample_user.id}", data="", content_type="application/json")
+def test_update_user_no_body(owner_client, sample_user):
+    response = owner_client.put(
+        f"/users/{sample_user.id}", data="", content_type="application/json"
+    )
     assert response.status_code == 400
 
 
@@ -140,9 +142,9 @@ def test_update_user_no_body(client, sample_user):
 # ---------------------------------------------------------------------------
 
 
-def test_bulk_import_users(client, users_csv):
+def test_bulk_import_users(admin_client, users_csv):
     file_data, filename = users_csv
-    response = client.post(
+    response = admin_client.post(
         "/users/bulk",
         data={"file": (file_data, filename)},
         content_type="multipart/form-data",
@@ -152,14 +154,14 @@ def test_bulk_import_users(client, users_csv):
     assert data["imported"] == 2
 
 
-def test_bulk_import_no_file(client):
-    response = client.post("/users/bulk", content_type="multipart/form-data")
+def test_bulk_import_no_file(admin_client):
+    response = admin_client.post("/users/bulk", content_type="multipart/form-data")
     assert response.status_code == 400
 
 
-def test_bulk_import_wrong_file_type(client):
+def test_bulk_import_wrong_file_type(admin_client):
     bad_file = (io.BytesIO(b"some data"), "data.txt")
-    response = client.post(
+    response = admin_client.post(
         "/users/bulk",
         data={"file": bad_file},
         content_type="multipart/form-data",
@@ -167,26 +169,26 @@ def test_bulk_import_wrong_file_type(client):
     assert response.status_code == 400
 
 
-def test_bulk_import_replaces_existing_users(client, sample_user, users_csv):
+def test_bulk_import_replaces_existing_users(admin_client, sample_user, users_csv):
     """Bulk import is additive (non-destructive): existing users are kept."""
     file_data, filename = users_csv
-    response = client.post(
+    response = admin_client.post(
         "/users/bulk",
         data={"file": (file_data, filename)},
         content_type="multipart/form-data",
     )
     assert response.status_code == 200
 
-    list_response = client.get("/users")
+    list_response = admin_client.get("/users")
     data = list_response.get_json()
     usernames = {u["username"] for u in data["sample"]}
     assert "testuser" in usernames
     assert "alice" in usernames
 
 
-def test_bulk_import_wrong_content_type(client):
+def test_bulk_import_wrong_content_type(admin_client):
     """Bulk import without multipart/form-data content type should be 415."""
-    response = client.post(
+    response = admin_client.post(
         "/users/bulk",
         data="username,email\nalice,alice@x.com\n",
         content_type="application/json",
@@ -194,14 +196,12 @@ def test_bulk_import_wrong_content_type(client):
     assert response.status_code == 415
 
 
-def test_get_user_by_id_cache_miss(app, client):
+def test_get_user_by_id_cache_miss(app, owner_client, sample_user):
     """A user created directly in the DB (not via POST) is not in cache,
     so GET must fetch from DB, set it, and return it."""
     from app.cache import get_l2
-    from app.models.user import User
 
-    with app.app_context():
-        user = User.create(username="cache_miss", email="miss@example.com")
+    user = sample_user
 
     # Ensure a real cache miss (L1 and L2 cleared for this key).
     import app.cache as cache
@@ -211,30 +211,31 @@ def test_get_user_by_id_cache_miss(app, client):
     if r:
         r.delete(f"user:{user.id}")
 
-    response = client.get(f"/users/{user.id}")
+    response = owner_client.get(f"/users/{user.id}")
     assert response.status_code == 200
     data = response.get_json()
     assert data["id"] == user.id
-    assert data["username"] == "cache_miss"
-    assert data["email"] == "miss@example.com"
+    assert data["username"] == user.username
+    assert data["email"] == user.email
 
 
-def test_delete_user(client, sample_user):
-    response = client.delete(f"/users/{sample_user.id}")
+def test_delete_user(owner_client, sample_user):
+    response = owner_client.delete(f"/users/{sample_user.id}")
     assert response.status_code == 200
 
 
 def test_delete_user_nonexistent(client):
     response = client.delete("/users/99999")
-    assert response.status_code == 200
+    # Ownership is checked before existence for ordinary users.
+    assert response.status_code == 404
 
 
-def test_get_user_cached_db_fetch_when_cache_misses(app, client, sample_user, monkeypatch):
+def test_get_user_cached_db_fetch_when_cache_misses(app, owner_client, sample_user, monkeypatch):
     """When the cache layer returns None for an existing user, get_user_cached
     falls through to User.get_by_id and returns from the DB (lines 88-90)."""
     import app.routes.users as users_module
 
     monkeypatch.setattr(users_module, "get_user", lambda user_id: None)
-    response = client.get(f"/users/{sample_user.id}")
+    response = owner_client.get(f"/users/{sample_user.id}")
     assert response.status_code == 200
     assert response.get_json()["id"] == sample_user.id

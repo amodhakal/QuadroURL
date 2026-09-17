@@ -3,15 +3,15 @@
 from app.utils.events import flush_events
 
 
-def test_list_events_empty(client):
-    response = client.get("/events")
+def test_list_events_empty(owner_client):
+    response = owner_client.get("/events")
     assert response.status_code == 200
     assert response.get_json() == []
 
 
-def test_list_events_after_url_creation(client, sample_user):
+def test_list_events_after_url_creation(owner_client, sample_user):
     """Creating a URL should produce a 'created' event."""
-    client.post(
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -21,7 +21,7 @@ def test_list_events_after_url_creation(client, sample_user):
     )
 
     flush_events()
-    response = client.get("/events")
+    response = owner_client.get("/events")
     assert response.status_code == 200
     events = response.get_json()
     assert len(events) == 1
@@ -29,8 +29,8 @@ def test_list_events_after_url_creation(client, sample_user):
     assert events[0]["user_id"]["id"] == sample_user.id
 
 
-def test_event_has_required_fields(client, sample_user):
-    client.post(
+def test_event_has_required_fields(owner_client, sample_user):
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -40,7 +40,7 @@ def test_event_has_required_fields(client, sample_user):
     )
 
     flush_events()
-    events = client.get("/events").get_json()
+    events = owner_client.get("/events").get_json()
     event = events[0]
     assert "id" in event
     assert "url_id" in event
@@ -50,9 +50,9 @@ def test_event_has_required_fields(client, sample_user):
     assert "details" in event
 
 
-def test_event_details_is_dict(client, sample_user):
+def test_event_details_is_dict(owner_client, sample_user):
     """The details field should be parsed from JSON string into a dict."""
-    client.post(
+    owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -62,15 +62,15 @@ def test_event_details_is_dict(client, sample_user):
     )
 
     flush_events()
-    events = client.get("/events").get_json()
+    events = owner_client.get("/events").get_json()
     assert isinstance(events[0]["details"], dict)
     assert "short_code" in events[0]["details"]
     assert "original_url" in events[0]["details"]
 
 
-def test_update_url_produces_event(client, sample_user):
+def test_update_url_produces_event(owner_client, sample_user):
     """Updating a URL title should produce an 'updated' event."""
-    url_resp = client.post(
+    url_resp = owner_client.post(
         "/urls",
         json={
             "user_id": sample_user.id,
@@ -80,10 +80,10 @@ def test_update_url_produces_event(client, sample_user):
     )
     url_id = url_resp.get_json()["id"]
 
-    client.put(f"/urls/{url_id}", json={"title": "After"})
+    owner_client.put(f"/urls/{url_id}", json={"title": "After"})
 
     flush_events()
-    events = client.get("/events").get_json()
+    events = owner_client.get("/events").get_json()
     updated = [e for e in events if e["event_type"] == "updated"]
     assert len(updated) == 1
     assert updated[0]["details"]["field"] == "title"
@@ -122,7 +122,7 @@ def test_format_event_invalid_details_falls_back_to_empty(app, sample_url, sampl
         assert result["details"] == {}
 
 
-def test_list_events_filter_by_url_id(app, client, sample_user):
+def test_list_events_filter_by_url_id(app, owner_client, sample_user):
     from app.models.event import Event
     from app.models.url import Url
 
@@ -144,7 +144,7 @@ def test_list_events_filter_by_url_id(app, client, sample_user):
         Event.create(url_id=url1.id, user_id=sample_user.id, event_type="click", details="{}")
         Event.create(url_id=url2.id, user_id=sample_user.id, event_type="created", details="{}")
 
-    response = client.get(f"/events?url_id={url1.id}")
+    response = owner_client.get(f"/events?url_id={url1.id}")
     assert response.status_code == 200
     events = response.get_json()
     assert len(events) == 1
@@ -152,7 +152,7 @@ def test_list_events_filter_by_url_id(app, client, sample_user):
     assert events[0]["event_type"] == "click"
 
 
-def test_list_events_filter_by_user_id(app, client, sample_user):
+def test_list_events_filter_by_user_id(app, owner_client, sample_user):
     from app.models.event import Event
     from app.models.url import Url
     from app.models.user import User
@@ -176,14 +176,14 @@ def test_list_events_filter_by_user_id(app, client, sample_user):
         Event.create(url_id=url1.id, user_id=sample_user.id, event_type="click", details="{}")
         Event.create(url_id=url2.id, user_id=other.id, event_type="click", details="{}")
 
-    response = client.get(f"/events?user_id={sample_user.id}")
+    response = owner_client.get(f"/events?user_id={sample_user.id}")
     assert response.status_code == 200
     events = response.get_json()
     assert len(events) == 1
     assert events[0]["user_id"]["id"] == sample_user.id
 
 
-def test_list_events_filter_by_event_type(app, client, sample_user):
+def test_list_events_filter_by_event_type(app, owner_client, sample_user):
     from app.models.event import Event
     from app.models.url import Url
 
@@ -198,14 +198,14 @@ def test_list_events_filter_by_event_type(app, client, sample_user):
         Event.create(url_id=url.id, user_id=sample_user.id, event_type="click", details="{}")
         Event.create(url_id=url.id, user_id=sample_user.id, event_type="created", details="{}")
 
-    response = client.get("/events?event_type=click")
+    response = owner_client.get("/events?event_type=click")
     assert response.status_code == 200
     events = response.get_json()
     assert len(events) == 1
     assert events[0]["event_type"] == "click"
 
 
-def test_list_events_malformed_details(app, client, sample_url, sample_user):
+def test_list_events_malformed_details(app, owner_client, sample_url, sample_user):
     from app.models.event import Event
 
     with app.app_context():
@@ -216,15 +216,15 @@ def test_list_events_malformed_details(app, client, sample_url, sample_user):
             details="not json",
         )
 
-    response = client.get("/events")
+    response = owner_client.get("/events")
     assert response.status_code == 200
     events = response.get_json()
     assert len(events) == 1
     assert events[0]["details"] == {}
 
 
-def test_create_event_success(client, sample_url, sample_user):
-    response = client.post(
+def test_create_event_success(owner_client, sample_url, sample_user):
+    response = owner_client.post(
         "/events",
         json={
             "url_id": sample_url.id,
@@ -241,8 +241,8 @@ def test_create_event_success(client, sample_url, sample_user):
     assert data["details"] == {"foo": "bar"}
 
 
-def test_create_event_details_must_be_object(client, sample_url, sample_user):
-    response = client.post(
+def test_create_event_details_must_be_object(owner_client, sample_url, sample_user):
+    response = owner_client.post(
         "/events",
         json={
             "url_id": sample_url.id,
@@ -252,4 +252,21 @@ def test_create_event_details_must_be_object(client, sample_url, sample_user):
         },
     )
     assert response.status_code == 400
-    assert response.get_json().get("error") == "details must be an object"
+    assert response.get_json()["error"] == "details: Input should be a valid dictionary"
+
+
+def test_foreign_actor_cannot_list_or_create_owner_events(
+    client, owner_client, sample_url, sample_user
+):
+    payload = {"url_id": sample_url.id, "event_type": "click"}
+    created = owner_client.post("/events", json=payload)
+    assert created.status_code == 201
+    assert created.get_json()["user_id"] == {"id": sample_user.id}
+    assert len(owner_client.get("/events").get_json()) == 1
+
+    assert client.get("/events").get_json() == []
+    assert client.get(f"/events?user_id={sample_user.id}").get_json() == []
+    assert client.get(f"/events?url_id={sample_url.id}").get_json() == []
+    assert client.post("/events", json=payload).status_code == 404
+    assert client.post("/events", json={**payload, "user_id": sample_user.id}).status_code == 404
+    assert len(owner_client.get("/events").get_json()) == 1

@@ -3,7 +3,7 @@
 Contract pins:
 
 - POST /urls accepts optional ``expires_at`` (ISO 8601, tz-aware, future).
-  Past dates abort 400 ``"expires_at must be in the future"``; bad formats
+  Past dates abort 400 with a field-qualified validation error; bad formats
   and timezone-naive values abort 400 as well (naive input is rejected rather
   than silently assumed UTC).
 - PUT /urls/<id> accepts ``expires_at`` (same validation; explicit null
@@ -43,8 +43,8 @@ def _payload(sample_user, **extra):
 # ---------------------------------------------------------------------------
 
 
-def test_create_url_with_future_expires_at(client, sample_user):
-    response = client.post("/urls", json=_payload(sample_user, expires_at=FUTURE_ISO))
+def test_create_url_with_future_expires_at(owner_client, sample_user):
+    response = owner_client.post("/urls", json=_payload(sample_user, expires_at=FUTURE_ISO))
     assert response.status_code == 201
     data = response.get_json()
     assert data["expires_at"] is not None
@@ -52,46 +52,55 @@ def test_create_url_with_future_expires_at(client, sample_user):
     assert parsed.tzinfo is not None
     assert parsed > datetime.now(timezone.utc)
 
-    fetched = client.get(f"/urls/{data['id']}").get_json()
+    fetched = owner_client.get(f"/urls/{data['id']}").get_json()
     assert fetched["expires_at"] == data["expires_at"]
 
-    sample = client.get("/urls").get_json()["sample"]
+    sample = owner_client.get("/urls").get_json()["sample"]
     by_code = {u["short_code"]: u for u in sample}
     assert by_code[data["short_code"]]["expires_at"] == data["expires_at"]
 
 
-def test_create_url_expires_at_z_suffix_accepted(client, sample_user):
-    response = client.post("/urls", json=_payload(sample_user, expires_at="2030-06-01T12:00:00Z"))
+def test_create_url_expires_at_z_suffix_accepted(owner_client, sample_user):
+    response = owner_client.post(
+        "/urls", json=_payload(sample_user, expires_at="2030-06-01T12:00:00Z")
+    )
     assert response.status_code == 201
     assert response.get_json()["expires_at"] is not None
 
 
-def test_create_url_without_expires_at_defaults_null(client, sample_user):
-    response = client.post("/urls", json=_payload(sample_user))
+def test_create_url_without_expires_at_defaults_null(owner_client, sample_user):
+    response = owner_client.post("/urls", json=_payload(sample_user))
     assert response.status_code == 201
     assert response.get_json()["expires_at"] is None
 
-    fetched = client.get(f"/urls/{response.get_json()['id']}").get_json()
+    fetched = owner_client.get(f"/urls/{response.get_json()['id']}").get_json()
     assert fetched["expires_at"] is None
 
 
-def test_create_url_past_expires_at_rejected(client, sample_user):
-    response = client.post("/urls", json=_payload(sample_user, expires_at=PAST_ISO))
+def test_create_url_past_expires_at_rejected(owner_client, sample_user):
+    response = owner_client.post("/urls", json=_payload(sample_user, expires_at=PAST_ISO))
     assert response.status_code == 400
-    assert response.get_json()["error"] == "expires_at must be in the future"
+    assert (
+        response.get_json()["error"] == "expires_at: Value error, expires_at must be in the future"
+    )
 
 
-def test_create_url_bad_format_expires_at_rejected(client, sample_user):
+def test_create_url_bad_format_expires_at_rejected(owner_client, sample_user):
     for bad in ("not-a-date", "", 12345, True):
-        response = client.post("/urls", json=_payload(sample_user, expires_at=bad))
+        response = owner_client.post("/urls", json=_payload(sample_user, expires_at=bad))
         assert response.status_code == 400
 
 
-def test_create_url_naive_expires_at_rejected(client, sample_user):
+def test_create_url_naive_expires_at_rejected(owner_client, sample_user):
     """Naive datetimes are rejected, not silently assumed UTC (#192)."""
-    response = client.post("/urls", json=_payload(sample_user, expires_at="2030-01-01T00:00:00"))
+    response = owner_client.post(
+        "/urls", json=_payload(sample_user, expires_at="2030-01-01T00:00:00")
+    )
     assert response.status_code == 400
-    assert response.get_json()["error"] == "expires_at must include timezone info"
+    assert (
+        response.get_json()["error"]
+        == "expires_at: Value error, expires_at must include a timezone"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -99,27 +108,29 @@ def test_create_url_naive_expires_at_rejected(client, sample_user):
 # ---------------------------------------------------------------------------
 
 
-def test_update_url_expires_at_set_and_cleared(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", json={"expires_at": FUTURE_ISO})
+def test_update_url_expires_at_set_and_cleared(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", json={"expires_at": FUTURE_ISO})
     assert response.status_code == 200
     assert response.get_json()["expires_at"] is not None
 
-    cleared = client.put(f"/urls/{sample_url.id}", json={"expires_at": None})
+    cleared = owner_client.put(f"/urls/{sample_url.id}", json={"expires_at": None})
     assert cleared.status_code == 200
     assert cleared.get_json()["expires_at"] is None
 
-    fetched = client.get(f"/urls/{sample_url.id}").get_json()
+    fetched = owner_client.get(f"/urls/{sample_url.id}").get_json()
     assert fetched["expires_at"] is None
 
 
-def test_update_url_past_expires_at_rejected(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", json={"expires_at": PAST_ISO})
+def test_update_url_past_expires_at_rejected(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", json={"expires_at": PAST_ISO})
     assert response.status_code == 400
-    assert response.get_json()["error"] == "expires_at must be in the future"
+    assert (
+        response.get_json()["error"] == "expires_at: Value error, expires_at must be in the future"
+    )
 
 
-def test_update_url_bad_format_expires_at_rejected(client, sample_url):
-    response = client.put(f"/urls/{sample_url.id}", json={"expires_at": "tomorrow"})
+def test_update_url_bad_format_expires_at_rejected(owner_client, sample_url):
+    response = owner_client.put(f"/urls/{sample_url.id}", json={"expires_at": "tomorrow"})
     assert response.status_code == 400
 
 
@@ -144,34 +155,36 @@ def test_redirect_expired_url_404s(app, client, sample_user):
 
     assert client.get("/urls/exp001/redirect").status_code == 404
     assert client.get("/r/exp001").status_code == 404
-    # Second hits repeat the check against the L1-cached (datetime) entry.
+    # Repeated requests still check the fresh database lifecycle state.
     assert client.get("/urls/exp001/redirect").status_code == 404
     assert client.get("/r/exp001").status_code == 404
 
 
-def test_redirect_expired_iso_string_cache_entry_404s(client, sample_user):
-    """Cached ISO-string expiries (L2 round-trip shape) also 404."""
+def test_redirect_expired_url_ignores_unexpired_cache(client, sample_url, sample_user):
+    """Fresh database expiry wins over a stale, still-live short-code cache."""
     from app.cache import set_url_by_short_code
 
+    sample_url.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    sample_url.save()
     set_url_by_short_code(
-        "expstr",
+        sample_url.short_code,
         {
-            "id": 424242,
+            "id": sample_url.id,
             "user_id": sample_user.id,
-            "short_code": "expstr",
-            "original_url": "https://example.com/old",
-            "title": "Expired",
+            "short_code": sample_url.short_code,
+            "original_url": sample_url.original_url,
+            "title": sample_url.title,
             "is_active": True,
-            "expires_at": PAST_ISO,
+            "expires_at": FUTURE_ISO,
         },
     )
-    assert client.get("/urls/expstr/redirect").status_code == 404
+    assert client.get(f"/urls/{sample_url.short_code}/redirect").status_code == 404
     assert client.get("/r/exp001x").status_code == 404  # unknown code still 404
-    assert client.get("/r/expstr").status_code == 404
+    assert client.get(f"/r/{sample_url.short_code}").status_code == 404
 
 
-def test_redirect_unexpired_url_unaffected(client, sample_user):
-    created = client.post("/urls", json=_payload(sample_user, expires_at=FUTURE_ISO))
+def test_redirect_unexpired_url_unaffected(client, owner_client, sample_user):
+    created = owner_client.post("/urls", json=_payload(sample_user, expires_at=FUTURE_ISO))
     assert created.status_code == 201
     short_code = created.get_json()["short_code"]
 
@@ -183,14 +196,16 @@ def test_redirect_unexpired_url_unaffected(client, sample_user):
     assert legacy.get_json()["url"] == "https://example.com/page"
 
 
-def test_get_and_list_surface_expires_at(client, sample_user):
-    with_expiry = client.post("/urls", json=_payload(sample_user, expires_at=FUTURE_ISO)).get_json()
-    without_expiry = client.post("/urls", json=_payload(sample_user)).get_json()
+def test_get_and_list_surface_expires_at(owner_client, sample_user):
+    with_expiry = owner_client.post(
+        "/urls", json=_payload(sample_user, expires_at=FUTURE_ISO)
+    ).get_json()
+    without_expiry = owner_client.post("/urls", json=_payload(sample_user)).get_json()
 
-    assert client.get(f"/urls/{with_expiry['id']}").get_json()["expires_at"] is not None
-    assert client.get(f"/urls/{without_expiry['id']}").get_json()["expires_at"] is None
+    assert owner_client.get(f"/urls/{with_expiry['id']}").get_json()["expires_at"] is not None
+    assert owner_client.get(f"/urls/{without_expiry['id']}").get_json()["expires_at"] is None
 
-    sample = client.get("/urls").get_json()["sample"]
+    sample = owner_client.get("/urls").get_json()["sample"]
     by_code = {u["short_code"]: u for u in sample}
     assert "expires_at" in by_code[with_expiry["short_code"]]
     assert "expires_at" in by_code[without_expiry["short_code"]]

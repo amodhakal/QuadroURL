@@ -1,7 +1,7 @@
 """Tests for DELETE /users/<id> cascade (issue #237)."""
 
 
-def test_delete_user_with_urls_and_events(app, client, sample_user):
+def test_delete_user_with_urls_and_events(app, owner_client, sample_user):
     from app.cache import get_url_by_short_code, get_user
     from app.models.event import Event
     from app.models.url import Url
@@ -25,12 +25,12 @@ def test_delete_user_with_urls_and_events(app, client, sample_user):
         url_id = url.id
 
     # Prime caches so we can assert coherence after delete.
-    assert client.get(f"/users/{user_id}").status_code == 200
+    assert owner_client.get(f"/users/{user_id}").status_code == 200
     assert get_user(user_id) is not None
-    assert client.get(f"/urls/{url_id}").status_code == 200
+    assert owner_client.get(f"/urls/{url_id}").status_code == 200
     assert get_url_by_short_code("delme1") is not None
 
-    response = client.delete(f"/users/{user_id}")
+    response = owner_client.delete(f"/users/{user_id}")
     assert response.status_code == 200
 
     with app.app_context():
@@ -46,4 +46,5 @@ def test_delete_user_with_urls_and_events(app, client, sample_user):
 
 def test_delete_user_nonexistent(client):
     response = client.delete("/users/99999")
-    assert response.status_code == 200
+    # Ownership is checked before existence for ordinary users.
+    assert response.status_code == 404

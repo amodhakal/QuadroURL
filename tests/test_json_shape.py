@@ -1,7 +1,7 @@
 """Regression tests for issue #240.
 
 Truthy non-dict JSON bodies (e.g. ``"hello"``, ``[1,2]``, ``42``, ``true``)
-must abort 400 ``Invalid JSON`` via ``require_json`` instead of crashing
+must abort 400 ``Invalid JSON`` via ``parse_body`` instead of crashing
 with ``AttributeError`` on ``data.get`` (500).
 """
 
@@ -18,8 +18,8 @@ def test_create_user_rejects_non_dict_json(client, body):
 
 
 @pytest.mark.parametrize("body", BODIES)
-def test_update_user_rejects_non_dict_json(client, sample_user, body):
-    r = client.put(f"/users/{sample_user.id}", data=body, content_type="application/json")
+def test_update_user_rejects_non_dict_json(owner_client, sample_user, body):
+    r = owner_client.put(f"/users/{sample_user.id}", data=body, content_type="application/json")
     assert r.status_code == 400
     assert r.get_json()["error"] == "Invalid JSON"
 
@@ -32,8 +32,8 @@ def test_create_url_rejects_non_dict_json(client, body):
 
 
 @pytest.mark.parametrize("body", BODIES)
-def test_update_url_rejects_non_dict_json(client, sample_url, body):
-    r = client.put(f"/urls/{sample_url.id}", data=body, content_type="application/json")
+def test_update_url_rejects_non_dict_json(owner_client, sample_url, body):
+    r = owner_client.put(f"/urls/{sample_url.id}", data=body, content_type="application/json")
     assert r.status_code == 400
     assert r.get_json()["error"] == "Invalid JSON"
 

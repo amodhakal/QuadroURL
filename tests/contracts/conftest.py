@@ -5,7 +5,8 @@ from flask import Flask, jsonify
 from peewee import SqliteDatabase
 from werkzeug.exceptions import HTTPException
 
-from app.models import User, Url, Event, ApiKey, RequestLog
+from app.database import models as schema
+from migrations_runner import upgrade
 
 
 @pytest.fixture()
@@ -17,11 +18,9 @@ def app(monkeypatch):
     from app import cache
 
     database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
-    from app.database import models as schema
-
-    models = [User, Url, Event, ApiKey, RequestLog, schema.LinkMetadata]
+    models = [model for name, model in vars(schema).items() if name != "BaseModel"]
     with database.bind_ctx(models):
-        database.create_tables(models)
+        upgrade(database, schema)
         instance = Flask(__name__)
         instance.config.update(TESTING=True)
         for bp in (users_bp, urls_bp, events_bp, auth_bp):

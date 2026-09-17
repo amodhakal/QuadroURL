@@ -148,7 +148,7 @@ def test_ratelimit_bypassed_under_testing(app, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_request_succeeds_when_log_publish_fails(client, sample_user, monkeypatch):
+def test_request_succeeds_when_log_publish_fails(owner_client, sample_user, monkeypatch):
     """track_metrics must swallow publish_log_event errors (response intact)."""
     import app as app_pkg
 
@@ -157,7 +157,9 @@ def test_request_succeeds_when_log_publish_fails(client, sample_user, monkeypatc
 
     monkeypatch.setattr(app_pkg, "publish_log_event", boom)
 
-    response = client.get(f"/users/{sample_user.id}")
+    # The swallowed Kafka error is asserted by the absence of a 500 plus the
+    # captured "Failed to publish request log" log record.
+    response = owner_client.get(f"/users/{sample_user.id}")
     assert response.status_code == 200
     assert response.get_json()["username"] == sample_user.username
 
@@ -203,9 +205,13 @@ def test_produce_reraises_unexpected_kafka_errors(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_fail_route_disabled_by_default_returns_404(client, monkeypatch):
-    """GET /fail without CHAOS_ENABLED=true must 404 (#100, #158)."""
+def test_fail_route_disabled_by_default_returns_404(admin_client, monkeypatch):
+    """GET /fail without CHAOS_ENABLED=true must 404 (#100, #158).
+
+    Authenticated as admin because @require_admin fires before the
+    CHAOS_ENABLED check; the 404 pin targets the chaos gate itself.
+    """
     monkeypatch.setenv("CHAOS_ENABLED", "false")
     monkeypatch.delenv("CHAOS_TOKEN", raising=False)
 
-    assert client.get("/fail").status_code == 404
+    assert admin_client.get("/fail").status_code == 404

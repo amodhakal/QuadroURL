@@ -76,6 +76,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Apply test database migrations
+        run: uv run python -m migrations_runner upgrade
+
       - name: Run tests with coverage
         run: uv run pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=80 -v
 
