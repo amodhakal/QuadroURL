@@ -109,6 +109,11 @@ def create_models(database):
         created_at = DateTimeField(default=utcnow)
 
     return SimpleNamespace(
-        BaseModel=BaseModel, User=User, Url=Url, Event=Event, RequestLog=RequestLog, ApiKey=ApiKey,
+        BaseModel=BaseModel,
+        User=User,
+        Url=Url,
+        Event=Event,
+        RequestLog=RequestLog,
+        ApiKey=ApiKey,
         LinkMetadata=LinkMetadata,
     )
