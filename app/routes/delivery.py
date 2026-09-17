@@ -9,28 +9,26 @@ from flask import Blueprint, abort, g, jsonify, request
 from app.database import db, models
 from app.models.url import Url
 from app.utils.auth import assert_owner, require_admin, require_auth
+from app.utils.schemas import (
+    DeadLetterQuery,
+    ReplayRequest,
+    WebhookCreate,
+    parse_body,
+    parse_query,
+)
 from shared.delivery_models import create_delivery_models
-from shared.delivery_worker import allowed_topics, validate_destination
+from shared.delivery_worker import allowed_topics
 
 
 delivery_bp = Blueprint("delivery", __name__)
 delivery = create_delivery_models(db, models)
 
 
-def body():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        abort(400, description="Expected a JSON object")
-    return data
-
-
 @delivery_bp.get("/admin/dead-letters")
 @require_admin
 def dead_letters():
-    try:
-        after = int(request.args.get("after", 0))
-    except ValueError:
-        abort(400)
+    query = parse_query(DeadLetterQuery)
+    after = query.after
     rows = (
         delivery.DeadLetter.select()
         .where(delivery.DeadLetter.id > after)
@@ -56,16 +54,12 @@ def dead_letters():
 @delivery_bp.post("/admin/dead-letters/<int:letter_id>/replay")
 @require_admin
 def replay_dead_letter(letter_id):
-    data = body()
-    if set(data) - {"payload"}:
-        abort(400, description="Only an optional corrected payload is accepted")
+    data = parse_body(ReplayRequest)
     letter = delivery.DeadLetter.get_or_none(delivery.DeadLetter.id == letter_id)
     if letter is None:
         abort(404)
     if letter.topic not in allowed_topics():
         abort(400, description="Source topic is not replayable")
-    if "payload" in data and not isinstance(data["payload"], dict):
-        abort(400, description="Corrected payload must be a JSON object")
     payload = json.dumps(data["payload"]).encode("utf-8") if "payload" in data else letter.payload
     if payload is not None and len(payload) > 1024 * 1024:
         abort(413)
@@ -124,16 +118,8 @@ def subscriptions(url_id):
                 .limit(100)
             ]
         )
-    data = body()
-    if set(data) != {"destination", "milestone"}:
-        abort(400, description="Expected destination and milestone")
+    data = parse_body(WebhookCreate)
     milestone = data["milestone"]
-    if type(milestone) is not int or not 1 <= milestone <= 2**63 - 1:
-        abort(400, description="Milestone must be a positive integer")
-    try:
-        validate_destination(data["destination"])
-    except ValueError:
-        abort(400, description="Destination must be an operator-approved HTTPS URL")
     with db.atomic():
         # Serialize registrations per URL and bound fanout.
         Url.update(updated_at=Url.updated_at).where(Url.id == url_id).execute()

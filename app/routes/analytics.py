@@ -12,11 +12,12 @@ import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, abort, jsonify, request
+from flask import Blueprint, abort, jsonify
 
 from app.models import Event, Url
 from app.utils.auth import assert_owner, require_auth
 from app.utils.ratelimit import rate_limit
+from app.utils.schemas import AnalyticsQuery, parse_query
 
 analytics_bp = Blueprint("analytics", __name__)
 
@@ -62,22 +63,8 @@ def _bucket_key(timestamp, bucket):
 
 
 def _parse_window():
-    if set(request.args) - {"bucket", "days"}:
-        abort(400, description="Unknown analytics parameter")
-    bucket = request.args.get("bucket", "day")
-    if bucket not in BUCKET_FORMATS:
-        abort(400, description="bucket must be day, week, or month")
-    raw_days = request.args.get("days")
-    if raw_days is None:
-        days = 30
-    else:
-        try:
-            days = int(raw_days)
-        except (TypeError, ValueError):
-            abort(400, description="days must be an integer")
-    if not 1 <= days <= MAX_WINDOW_DAYS:
-        abort(400, description=f"days must be between 1 and {MAX_WINDOW_DAYS}")
-    return bucket, days
+    query = parse_query(AnalyticsQuery)
+    return query.bucket, query.days
 
 
 @analytics_bp.route("/urls/<short_code>/analytics", methods=["GET"])
