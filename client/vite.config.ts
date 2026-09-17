@@ -7,6 +7,11 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   test: {
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+    },
   },
   plugins: [
     react(),

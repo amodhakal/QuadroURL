@@ -80,7 +80,16 @@ jobs:
         run: uv run python -m migrations_runner upgrade
 
       - name: Run tests with coverage
-        run: uv run pytest tests/ --cov=app --cov-report=term-missing --cov-fail-under=80 -v
+        run: uv run pytest tests/ --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=80 -v
+
+      - name: Upload server coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: server
+          disable_search: true
 
   client-test:
     runs-on: ubuntu-latest
@@ -108,8 +117,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run unit tests
-        run: pnpm test:unit src
+      - name: Run unit tests with coverage
+        run: pnpm test:unit --coverage src
+
+      - name: Upload client coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('client/coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: client/coverage/lcov.info
+          flags: client
+          disable_search: true
 
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium

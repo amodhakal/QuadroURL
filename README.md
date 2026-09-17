@@ -1,5 +1,7 @@
 # QuadroURL
 
+[![codecov](https://codecov.io/gh/amodhakal/QuadroURL/graph/badge.svg?token=93QYVNR177)](https://codecov.io/gh/amodhakal/QuadroURL)
+
 **Stack:** Python · Flask · Gunicorn · Peewee ORM · PostgreSQL · Redis · Kafka · React + TypeScript (Vite) · Docker · Terraform / AWS (ECS Fargate, RDS, ElastiCache, ALB) · Grafana / Loki / Promtail / Prometheus · Locust
 
 A URL shortener API with comprehensive caching, metrics, request audit logging via Kafka, and load testing infrastructure.

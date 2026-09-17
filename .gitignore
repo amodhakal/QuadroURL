@@ -32,6 +32,8 @@ judging/
 
 # Coverage
 .coverage
+/coverage.xml
+/client/coverage/
 venv/
 
 # Terraform
