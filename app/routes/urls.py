@@ -20,7 +20,6 @@ from app.cache import (
     delete_url_by_short_code,
     get_list_cache,
     get_url,
-    get_url_by_short_code,
     get_user,
     set_list_cache,
     set_url,
@@ -169,6 +168,9 @@ def create_url():
     user_id = data.get("user_id", g.current_user_id)
     require_owner(user_id)
     original_url = data["original_url"]
+    from app.utils.url_safety import require_destination_safe
+
+    require_destination_safe(original_url)
     title = data["title"]
     expires_at = data.get("expires_at")
 
@@ -492,43 +494,56 @@ def delete_url_endpoint(url_id):
 
 
 def resolve_short_code_or_404(short_code):
-    """Shared lookup for both redirect routes (#190).
+    """Apply the same fresh password, lifecycle and safety policy on every alias."""
+    from app.utils.link_access import resolve_public_link
 
-    Returns the cached URL dict, aborting 404 when missing/inactive.
-    """
-    data = get_url_by_short_code(short_code)
-    if data is None:
-        current_app.logger.warning(f"Short code not found: {short_code}")
-        abort(404)
-    if not data.get("is_active", True):
-        current_app.logger.warning(f"Short code inactive: {short_code}")
-        abort(404)
-    if _is_expired(data.get("expires_at"), datetime.now(timezone.utc)):
-        current_app.logger.warning(f"Short code expired: {short_code}")
-        abort(404)
-    return data
+    return resolve_public_link(short_code)
 
 
 def track_click(data, short_code):
-    """Best-effort click tracking: skips bots, never breaks redirects (#147)."""
+    """Best-effort click tracking: skips bots, never breaks redirects (#147).
+
+    Click payloads carry referrer/user-agent/visitor data for #177 analytics;
+    parsing failures degrade to "direct"/Unknown without breaking redirects.
+    """
     try:
         user_agent = request.headers.get("User-Agent", "")
+        referrer = request.headers.get("Referer", "") or ""
     except Exception:
-        user_agent = ""
+        user_agent, referrer = "", ""
     if is_bot_user_agent(user_agent):
         return
     try:
+        from app.routes.analytics import classify_user_agent
+
         create_event(
             data["id"],
             data["user_id"],
             "click",
-            {"short_code": short_code},
+            {
+                "short_code": short_code,
+                "referrer": referrer,
+                "user_agent": classify_user_agent(user_agent),
+                "visitor": stable_visitor_id(),
+            },
         )
     except Exception:
         current_app.logger.exception("Click tracking failed (redirect unaffected)")
 
 
-@urls_bp.route("/urls/<short_code>/redirect", methods=["GET"])
+def stable_visitor_id():
+    """Rotate daily, hash client traits; never store a raw IP address."""
+    import hashlib
+    from datetime import datetime, timezone
+
+    from app.utils.request_ctx import get_client_ip
+
+    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    traits = f"{get_client_ip()}|{request.headers.get('User-Agent', '')}"
+    return f"{day}:{hashlib.sha256(traits.encode('utf-8')).hexdigest()[:32]}"
+
+
+@urls_bp.route("/urls/<short_code>/redirect", methods=["GET", "POST"])
 @rate_limit(capacity=2000, refill_rate=200.0)
 def redirect_short_code(short_code):
     data = resolve_short_code_or_404(short_code)
@@ -539,7 +554,7 @@ def redirect_short_code(short_code):
     return flask_redirect(data["original_url"])
 
 
-@urls_bp.route("/r/<short_code>", methods=["GET"])
+@urls_bp.route("/r/<short_code>", methods=["GET", "POST"])
 @rate_limit(capacity=2000, refill_rate=200.0)
 def redirect_short_code_legacy(short_code):
     data = resolve_short_code_or_404(short_code)

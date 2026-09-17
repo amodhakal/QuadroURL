@@ -59,6 +59,14 @@ def create_models(database):
             self.updated_at = utcnow()
             return super().save(*args, **kwargs)
 
+    class LinkMetadata(BaseModel):
+        url = ForeignKeyField(Url, backref="link_metadata", primary_key=True, on_delete="CASCADE")
+        # Canonical JSON array of normalized tags; bounded at the API boundary.
+        tags = TextField(default="[]")
+        folder = CharField(max_length=80, default="", index=True)
+        password_hash = TextField(default="")
+        updated_at = DateTimeField(default=utcnow)
+
     class Event(BaseModel):
         id = AutoField()
         url = ForeignKeyField(Url, backref="events")
@@ -101,5 +109,6 @@ def create_models(database):
         created_at = DateTimeField(default=utcnow)
 
     return SimpleNamespace(
-        BaseModel=BaseModel, User=User, Url=Url, Event=Event, RequestLog=RequestLog, ApiKey=ApiKey
+        BaseModel=BaseModel, User=User, Url=Url, Event=Event, RequestLog=RequestLog, ApiKey=ApiKey,
+        LinkMetadata=LinkMetadata,
     )

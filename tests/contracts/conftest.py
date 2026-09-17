@@ -17,7 +17,9 @@ def app(monkeypatch):
     from app import cache
 
     database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
-    models = [User, Url, Event, ApiKey, RequestLog]
+    from app.database import models as schema
+
+    models = [User, Url, Event, ApiKey, RequestLog, schema.LinkMetadata]
     with database.bind_ctx(models):
         database.create_tables(models)
         instance = Flask(__name__)
@@ -25,6 +27,11 @@ def app(monkeypatch):
         for bp in (users_bp, urls_bp, events_bp, auth_bp):
             instance.register_blueprint(bp)
             instance.register_blueprint(bp, url_prefix="/api/v1", name=f"{bp.name}_v1")
+
+        from app.routes.analytics import analytics_bp
+
+        instance.register_blueprint(analytics_bp)
+        instance.register_blueprint(analytics_bp, url_prefix="/api/v1", name="analytics_v1")
 
         from app.routes.openapi import docs_bp
         from app.routes.logs import logs_bp

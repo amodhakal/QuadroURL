@@ -209,13 +209,24 @@ def publish_event(data: dict):
         details = data.get("details", {})
         if isinstance(details, dict):
             details = json.dumps(details)
-        _sync_write(
-            Event,
-            url_id=data.get("url_id"),
-            user_id=data.get("user_id"),
-            event_type=data.get("event_type"),
-            details=details,
-        )
+        from app.database import db, models
+        from app.routes.delivery import delivery
+        from shared.delivery import schedule_milestones
+
+        db.connect(reuse_if_open=True)
+        with db.atomic():
+            if data.get("event_type") == "click":
+                models.Url.update(updated_at=models.Url.updated_at).where(
+                    models.Url.id == data.get("url_id")
+                ).execute()
+            row = Event.create(
+                url_id=data.get("url_id"),
+                user_id=data.get("user_id"),
+                event_type=data.get("event_type"),
+                details=details,
+            )
+            if row.event_type == "click":
+                schedule_milestones(models, delivery, row.url_id)
         return
     # Key by URL so one link's events stay ordered on one partition (#161).
     url_id = data.get("url_id")

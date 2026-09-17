@@ -5,7 +5,7 @@ import string
 import time
 from datetime import datetime, timezone
 
-from peewee import IntegrityError
+from peewee import DataError, IntegrityError
 from models import Url
 
 
@@ -62,7 +62,7 @@ def _expires_at_iso(value):
     return None
 
 
-def handle_url_create_batch(messages, db, redis_client):
+def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
     """Create URLs for a batch of messages in one transaction + one Redis pipeline.
 
     Returns ``(ok, events)``.  ``ok`` is True when the batch was fully persisted
@@ -84,6 +84,8 @@ def handle_url_create_batch(messages, db, redis_client):
                 request_id, user_id, original_url, title = _validate(data)
 
                 if not all([request_id, user_id, original_url, title]):
+                    if raise_poison:
+                        raise ValueError("Missing required fields")
                     logger.warning(f"Invalid url-create message: {data}")
                     if request_id:
                         pending_results.append(
@@ -129,12 +131,17 @@ def handle_url_create_batch(messages, db, redis_client):
                             break
                         except Url.DoesNotExist:
                             continue
-                        except Exception:
-                            continue
+                    except (DataError, ValueError, TypeError):
+                        if raise_poison:
+                            # Permanent per-message failure → durable quarantine upstream.
+                            raise
+                        break  # legacy path: record per-message error status
                     except Exception:
                         continue
 
                 if url is None:
+                    if raise_poison:
+                        raise IntegrityError("URL creation failed after bounded retries")
                     logger.error(f"Failed to generate short code for request_id={request_id}")
                     pending_results.append(
                         (
@@ -178,6 +185,11 @@ def handle_url_create_batch(messages, db, redis_client):
                     }
                 )
                 created_count += 1
+    except (IntegrityError, DataError, ValueError, TypeError):
+        if raise_poison:
+            raise
+        logger.exception("Invalid url-create batch")
+        return False, []
     except Exception:
         logger.exception("Failed to process url-create batch")
         return False, []
