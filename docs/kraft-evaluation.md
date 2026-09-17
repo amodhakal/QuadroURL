@@ -62,7 +62,8 @@ clusters, **not** a data-preserving rollback of new writes.
 
 ## Validation and promotion gates
 
-Local static check (no daemon, secrets or .env required):
+Local static check (no daemon or secrets required; a `.env` must **exist** because
+the base file declares `env_file: .env` for `app` — its values can be empty):
 
 ```sh
 GF_ADMIN_PASSWORD=config-check-only docker compose --env-file .env.example -p quadrourl-kraft \

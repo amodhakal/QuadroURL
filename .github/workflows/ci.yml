@@ -69,7 +69,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Validate KRaft Compose overlay
-        run: GF_ADMIN_PASSWORD=config-check-only docker compose --env-file .env.example -p quadrourl-kraft -f docker-compose.yml -f docker-compose.kraft.yml config --no-env-resolution --quiet
+        # env_file: .env must exist for `compose config` even with --no-env-resolution.
+        run: |
+          touch .env
+          GF_ADMIN_PASSWORD=config-check-only docker compose --env-file .env.example -p quadrourl-kraft -f docker-compose.yml -f docker-compose.kraft.yml config --no-env-resolution --quiet
 
       - name: Validate KEDA manifest contract
         run: uv run --no-project --with pyyaml python scripts/check_keda_config.py
