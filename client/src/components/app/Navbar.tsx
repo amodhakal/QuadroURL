@@ -4,6 +4,7 @@ import { ThemeToggle } from "@/components/app/ThemeToggle"
 
 const links = [
   { to: "/", label: "Shorten" },
+  { to: "/search", label: "Search" },
   { to: "/users", label: "Users" },
 ]
 

@@ -305,6 +305,9 @@ def _create_url_sync(data):
     set_url(url.id, result)
     set_url_by_short_code(url.short_code, result)
 
+    if not deduplicated:
+        embed_url_best_effort(url)
+
     if deduplicated:
         # The winning attempt already emitted the "created" event; only the
         # cache calls are mirrored so a second event is never recorded (#113).
@@ -322,6 +325,29 @@ def _create_url_sync(data):
         }
     )
     return result
+
+
+def embed_url_best_effort(url):
+    """Best-effort embedding for one URL row (sync create, title re-embed).
+
+    No API key (tests, local dev) degrades to a no-op. Any failure only skips
+    the embedding row — the URL write already succeeded.
+    """
+    try:
+        from app.database import db
+        from app.models.url_embedding import UrlEmbedding
+        from shared.openrouter import DEFAULT_EMBEDDING_MODEL, api_key
+        from shared.semantic import embed_links_batch
+
+        key = api_key()
+        if not key:
+            return
+        model = os.environ.get("OPENROUTER_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+        embed_links_batch(
+            db, UrlEmbedding, [(url.id, url.title, url.original_url)], model=model, key=key
+        )
+    except Exception:
+        logger.warning("Sync-fallback embed skipped", exc_info=True)
 
 
 def flush_producer():

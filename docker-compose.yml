@@ -69,7 +69,10 @@ services:
       - app-network
 
   postgres:
-    image: postgres:16-alpine
+    # pgvector image (not stock postgres): migration 004 creates the vector
+    # extension + HNSW index for semantic search. Same major version/data
+    # layout as postgres:16, so existing volumes keep working.
+    image: pgvector/pgvector:pg16
     env_file:
       - .env
     environment:

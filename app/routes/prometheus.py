@@ -91,6 +91,68 @@ ERROR_COUNT = Counter(
 CPU_USAGE = _gauge("process_cpu_percent", "Current CPU usage percentage", _CPU_MODE)
 MEMORY_USAGE_MB = _gauge("process_memory_mb", "Process RSS memory in MB", _MEMORY_MODE)
 
+# Semantic search / RAG observability (OpenRouter embedding + chat calls).
+# The free tier is quota-bound (20/min, 50/day at $0 balance), so failure rate
+# and token usage are first-class signals, not debug extras.
+EMBEDDING_REQUESTS = Counter(
+    "embedding_requests_total",
+    "Total embedding API requests",
+    ["operation", "status"],
+    registry=_REGISTRY,
+)
+
+EMBEDDING_DURATION = Histogram(
+    "embedding_duration_seconds",
+    "Embedding API latency in seconds",
+    ["operation"],
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+    registry=_REGISTRY,
+)
+
+EMBEDDING_TOKENS = Counter(
+    "embedding_tokens_total",
+    "Total embedding input tokens",
+    ["operation"],
+    registry=_REGISTRY,
+)
+
+LLM_REQUESTS = Counter(
+    "llm_requests_total",
+    "Total LLM chat requests",
+    ["operation", "model", "status"],
+    registry=_REGISTRY,
+)
+
+LLM_DURATION = Histogram(
+    "llm_duration_seconds",
+    "LLM chat latency in seconds",
+    ["operation"],
+    buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+    registry=_REGISTRY,
+)
+
+LLM_TOKENS = Counter(
+    "llm_tokens_total",
+    "Total LLM tokens",
+    ["operation", "kind"],
+    registry=_REGISTRY,
+)
+
+RETRIEVAL_DURATION = Histogram(
+    "retrieval_duration_seconds",
+    "pgvector similarity lookup latency in seconds",
+    ["operation"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+    registry=_REGISTRY,
+)
+
+SEMANTIC_CACHE_HITS = Counter(
+    "semantic_cache_hits_total",
+    "Semantic-layer cache hits by cache name and outcome",
+    ["cache", "outcome"],
+    registry=_REGISTRY,
+)
+
 
 @prometheus_bp.route("/prometheus-metrics")
 def prometheus_metrics():

@@ -26,5 +26,6 @@ models = create_models(db)
 delivery_models = create_delivery_models(db, models)
 User = models.User
 Url = models.Url
+UrlEmbedding = models.UrlEmbedding
 Event = models.Event
 RequestLog = models.RequestLog

@@ -47,7 +47,8 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # pgvector image: migration 004 needs the vector extension.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

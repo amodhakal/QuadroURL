@@ -683,3 +683,74 @@ def set_list_cache(key, value, ttl=_LIST_TTL):
 def clear_list_cache(pattern):
     _l1_clear(pattern)
     _broadcast_invalidate("clear", pattern)
+
+
+# ---------------------------------------------------------------------------
+# Semantic layer cache (embeddings + search/ask responses, L2 Redis, fail-open)
+# ---------------------------------------------------------------------------
+
+# Embedding vectors are content-derived (no per-user scoping needed); a 1h TTL
+# bounds staleness after an embedding-model swap. Search/ask responses embed
+# owner-scoped sources, so callers must pass their auth scope
+# (see app.utils.auth.cache_scope) into the key.
+_EMBED_TTL = 3600
+_SEARCH_TTL = 60
+
+
+def _semantic_l2_get(key):
+    def _read(client):
+        return client.get(key)
+
+    raw = _l2_safe(_read)
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _semantic_l2_set(key, value, ttl):
+    try:
+        payload = json.dumps(value, cls=_Encoder)
+    except (TypeError, ValueError):
+        return
+    _l2_fire_and_forget(lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p))
+
+
+def get_cached_embedding(cache_key):
+    return _semantic_l2_get(f"embed:{cache_key}")
+
+
+def set_cached_embedding(cache_key, vector, tokens=0, ttl=_EMBED_TTL):
+    _semantic_l2_set(f"embed:{cache_key}", {"v": vector, "t": tokens}, ttl)
+
+
+def get_search_cache(scope, cache_key):
+    return _semantic_l2_get(f"search:{scope}:{cache_key}")
+
+
+def set_search_cache(scope, cache_key, value, ttl=_SEARCH_TTL):
+    _semantic_l2_set(f"search:{scope}:{cache_key}", value, ttl)
+
+
+def get_ask_cache(scope, cache_key):
+    return _semantic_l2_get(f"ask:{scope}:{cache_key}")
+
+
+def set_ask_cache(scope, cache_key, value, ttl=600):
+    _semantic_l2_set(f"ask:{scope}:{cache_key}", value, ttl)
+
+
+def clear_semantic_cache():
+    """Drop cached search/ask responses (embedding vectors are content-addressed).
+
+    Called on URL writes; staleness is otherwise bounded by the short TTLs.
+    """
+    _l2_fire_and_forget(lambda client: _scan_delete(client, "search:*"))
+    _l2_fire_and_forget(lambda client: _scan_delete(client, "ask:*"))

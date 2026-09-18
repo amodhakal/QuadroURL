@@ -2,9 +2,9 @@
 
 [![codecov](https://codecov.io/gh/amodhakal/QuadroURL/graph/badge.svg?token=93QYVNR177)](https://codecov.io/gh/amodhakal/QuadroURL)
 
-**Stack:** Python · Flask · Gunicorn · Peewee ORM · PostgreSQL · Redis · Kafka · React + TypeScript (Vite) · Docker · Terraform / AWS (ECS Fargate, RDS, ElastiCache, ALB) · Grafana / Loki / Promtail / Prometheus · Locust
+**Stack:** Python · Flask · Gunicorn · Peewee ORM · PostgreSQL + pgvector · Redis · Kafka · React + TypeScript (Vite) · Docker · Terraform / AWS (ECS Fargate, RDS, ElastiCache, ALB) · Grafana / Loki / Promtail / Prometheus · Locust
 
-A URL shortener API with comprehensive caching, metrics, request audit logging via Kafka, and load testing infrastructure.
+A URL shortener API with comprehensive caching, metrics, request audit logging via Kafka, semantic search and RAG Q&A over saved links (pgvector + OpenRouter free models), and load testing infrastructure.
 
 ### Tech Stack
 
@@ -453,6 +453,100 @@ GET /r/<short_code>
 
 ---
 
+### Semantic Search & RAG Q&A
+
+Powered by pgvector (1024-dim cosine similarity) and OpenRouter free models —
+embeddings via `OPENROUTER_EMBEDDING_MODEL` (default
+`liquid/lfm-2.5-embedding-350m:free`), answers via `OPENROUTER_CHAT_MODEL`
+(default `qwen/qwen3.8-27b:free`, fallback `OPENROUTER_FALLBACK_MODEL`). Link
+content is embedded on ingest (Kafka consumer, or inline in `KAFKA_SYNC_FALLBACK`
+mode) from title + original URL; title edits re-embed best-effort. Both
+endpoints are owner-scoped like `GET /urls` (callers only search their own
+links unless admin). Without `OPENROUTER_API_KEY` both answer `503` — URL
+creation is never affected. Free-tier quotas (20/min, 50/day at $0 balance)
+are stretched by Redis caching (embedding vectors 1h, answers `ASK_CACHE_TTL`).
+The React SPA (http://localhost:3000) exposes both under the Search page
+(`/search`): ranked results with relevance scores, and Q&A with cited sources.
+
+#### Semantic Search
+
+```
+GET /search?q=flask+postgres&k=5
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `q` | string | — (required) | Natural-language query (1–500 chars) |
+| `k` | int | `5` | Results to return (1–20) |
+
+**Response:** `200 OK`
+```json
+{
+  "kind": "search",
+  "query": "flask postgres",
+  "results": [
+    {
+      "id": 1,
+      "user_id": 1,
+      "short_code": "k8Jd9s",
+      "original_url": "https://example.com/long-page",
+      "title": "Example Page",
+      "score": 0.8731
+    }
+  ]
+}
+```
+
+**Errors:** `401` — missing/invalid API key. `503` — embedding service unreachable or DB without pgvector.
+
+---
+
+#### Ask (RAG Q&A)
+
+```
+POST /ask
+Content-Type: application/json
+```
+
+**Request body:**
+```json
+{
+  "question": "Which saved link covers Postgres connection pooling?",
+  "k": 5
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `question` | string | — (required) | Natural-language question (1–2000 chars) |
+| `k` | int | `5` | Links retrieved as context (1–20) |
+
+**Response:** `200 OK` — synthesized answer with cited sources:
+```json
+{
+  "answer": "The link [1] covers pooling with ...",
+  "model": "qwen/qwen3.8-27b:free",
+  "sources": [
+    {
+      "id": 1,
+      "user_id": 1,
+      "short_code": "k8Jd9s",
+      "original_url": "https://example.com/long-page",
+      "title": "Example Page",
+      "score": 0.8731
+    }
+  ]
+}
+```
+
+**Errors:** `401` — missing/invalid API key. `502/503` — language model unreachable, quota exhausted, or not configured.
+
+**Privacy note:** free OpenRouter endpoints may retain prompts/embeddings for
+training (see the Liquid model terms). Titles and URLs — but never API keys —
+are sent to the configured models.
+
+---
+
 ### Events
 
 #### List Events
@@ -584,6 +678,17 @@ GET /prometheus-metrics
 | `http_errors_total` | Counter | `method`, `endpoint`, `status` |
 | `process_cpu_percent` | Gauge | — |
 | `process_memory_mb` | Gauge | — |
+| `embedding_requests_total` | Counter | `operation` (`query`), `status` (`ok`, `error`) |
+| `embedding_duration_seconds` | Histogram | `operation` |
+| `embedding_tokens_total` | Counter | `operation` |
+| `llm_requests_total` | Counter | `operation` (`ask`), `model`, `status` |
+| `llm_duration_seconds` | Histogram | `operation` |
+| `llm_tokens_total` | Counter | `operation`, `kind` (`prompt`, `completion`) |
+| `retrieval_duration_seconds` | Histogram | `operation` (`search`) |
+| `semantic_cache_hits_total` | Counter | `cache` (`embedding`, `search`, `ask`), `outcome` (`hit`, `miss`) |
+
+The Grafana "Golden Signals" dashboard includes a "Semantic Search & RAG"
+row (embedding/LLM p95 latency, token usage, error + cache-hit rates).
 
 ---
 
@@ -1003,6 +1108,7 @@ QuadroURL/
 │   │   ├── events.py        # List + create events
 │   │   ├── metrics.py       # GET /metrics (golden signals)
 │   │   ├── logs.py          # GET /logs (in-memory buffer)
+│   │   ├── search.py        # GET /search (pgvector) + POST /ask (RAG)
 │   │   ├── prometheus.py    # GET /prometheus-metrics
 │   │   ├── dashboard.py     # GET /dashboard (live HTML dashboard)
 │   │   └── fail.py          # GET /fail (chaos endpoint)
@@ -1011,19 +1117,21 @@ QuadroURL/
 │       ├── events.py        # Event publishing via Kafka (replaces ThreadPoolExecutor)
 │       ├── kafka_producer.py # Kafka producer for all topics (logs, events, url-creates)
 │       ├── logger.py        # JSONFormatter helper
-│       └── ratelimit.py     # Distributed token-bucket rate limiting (Redis Lua)
+│       ├── ratelimit.py     # Distributed token-bucket rate limiting (Redis Lua)
+│       └── retrieval.py     # Cached query embedding + pgvector top-k lookup
 ├── client/                 # React + TypeScript SPA (Vite), nginx API proxy, TanStack Query
 ├── consumer/                # Kafka consumer service (separate container)
 │   ├── Dockerfile           # Python 3.13-slim consumer image
-│   ├── requirements.txt     # confluent-kafka, psycopg2, peewee, redis
+│   ├── requirements.txt     # confluent-kafka, psycopg2, peewee, redis, requests
 │   ├── config.py            # Per-topic configuration (drain intervals, batch sizes)
 │   ├── app.py               # Single-topic consumer (CONSUMER_TYPE=logs|events|creates), batched drains
-│   └── url_create_handler.py # Batched URL creation (short code gen, DB insert, Redis status)
+│   └── url_create_handler.py # Batched URL creation (short code gen, DB insert, Redis status, embed)
 ├── tests/                   # 24 test files, ~4300 lines
 ├── scripts/
 │   ├── test_locust.py       # Locust load test
 │   ├── run_load_tests.sh    # Automated sweep runner
 │   ├── generate_traffic.py  # Grafana traffic generator
+│   ├── backfill_embeddings.py # (Re)embed links missing/stale vectors
 │   └── load_csv.py          # CSV seed data loader
 ├── terraform/               # AWS load testing infrastructure
 │   ├── main.tf              # AWS provider, tags
@@ -1085,6 +1193,16 @@ QuadroURL/
 | `DB_MAX_CONNECTIONS_LOGS` | `10` | Request-log consumer pool size |
 | `DB_MAX_CONNECTIONS_EVENTS` | `10` | URL-event consumer pool size |
 | `DB_MAX_CONNECTIONS_CREATES` | `5` | URL-create consumer pool size |
+| `OPENROUTER_API_KEY` | — (unset) | OpenRouter key for embeddings + chat; unset disables `/search` + `/ask` (503) |
+| `OPENROUTER_CHAT_MODEL` | `qwen/qwen3.8-27b:free` | Chat model for `/ask` (free-tier slug, verify against `/api/v1/models`) |
+| `OPENROUTER_FALLBACK_MODEL` | `openrouter/free` | Fallback chat model on 404/429/5xx |
+| `OPENROUTER_EMBEDDING_MODEL` | `liquid/lfm-2.5-embedding-350m:free` | Embedding model (1024-dim; changing dims needs a new migration) |
+| `ASK_CACHE_TTL` | `600` | Seconds to cache `/ask` answers in Redis |
+
+Postgres must provide the pgvector `vector` extension (Docker Compose and CI
+use the `pgvector/pgvector:pg16` image; RDS PostgreSQL 15 supports pgvector —
+migration `004` runs `CREATE EXTENSION IF NOT EXISTS vector`). Backfill
+missing/stale embeddings with `PYTHONPATH=. uv run python scripts/backfill_embeddings.py`.
 
 ---
 

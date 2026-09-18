@@ -1,0 +1,12 @@
+# Never ship the local dev environment into images: a macOS-linked .venv
+# copied over the image's Linux venv breaks `uv run` at container start
+# (uv recreates the venv empty, so app deps like peewee go missing).
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+loadtests/
+coverage.xml
+htmlcov/

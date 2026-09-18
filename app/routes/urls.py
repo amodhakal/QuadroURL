@@ -16,6 +16,7 @@ from playhouse.shortcuts import model_to_dict
 
 from app.cache import (
     clear_list_cache,
+    clear_semantic_cache,
     delete_url,
     delete_url_by_short_code,
     get_list_cache,
@@ -27,7 +28,7 @@ from app.cache import (
 )
 from app.models.url import Url
 from app.utils.events import create_event
-from app.utils.kafka_producer import publish_url_create
+from app.utils.kafka_producer import embed_url_best_effort, publish_url_create
 from app.utils.auth import require_auth, require_owner, scope_query, is_admin
 from flask import g
 from hashlib import sha256
@@ -222,6 +223,7 @@ def create_url():
         )
         clear_list_cache("list:urls:")
         clear_list_cache("list:events:")
+        clear_semantic_cache()
         return jsonify(created), 201
 
     current_app.logger.info(f"URL create requested: request_id={request_id} user_id={user_id}")
@@ -457,7 +459,16 @@ def update_url(url_id):
         )
         current_app.logger.info(f"Updated expires_at for url id={url.id}")
 
+    title_changed = "title" in data
+
     url.save()
+    if title_changed:
+        # Embed input changed: refresh the vector best-effort (no key or
+        # quota exhaustion only skips the row; backfill covers the gap).
+        try:
+            embed_url_best_effort(url)
+        except Exception:
+            current_app.logger.warning("Title re-embed skipped", exc_info=True)
     data = format_url(url)
     set_url(url_id, data)
     # Keep the short-code cache coherent: redirects read via short_code,
@@ -465,6 +476,7 @@ def update_url(url_id):
     set_url_by_short_code(url.short_code, data)
     clear_list_cache("list:urls:")
     clear_list_cache("list:events:")
+    clear_semantic_cache()
     return jsonify(data)
 
 
@@ -486,6 +498,7 @@ def delete_url_endpoint(url_id):
             delete_url_by_short_code(short_code)
         clear_list_cache("list:urls:")
         clear_list_cache("list:events:")
+        clear_semantic_cache()
         current_app.logger.info(f"Deleted URL id={url_id}")
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for delete id={url_id}")

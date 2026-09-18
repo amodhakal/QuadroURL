@@ -583,7 +583,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Saturation — In-Flight Requests",
+      "title": "Saturation \u2014 In-Flight Requests",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -627,7 +627,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Saturation — CPU & Memory",
+      "title": "Saturation \u2014 CPU & Memory",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -676,6 +676,174 @@
             ]
           }
         ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Semantic Search & RAG",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Embedding & LLM Latency (p95)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(embedding_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "embed p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(llm_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "llm p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(retrieval_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "retrieval p95",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM & Embedding Token Usage",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_tokens_total{kind=\"prompt\"}[5m]))",
+          "legendFormat": "llm prompt",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(llm_tokens_total{kind=\"completion\"}[5m]))",
+          "legendFormat": "llm completion",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(embedding_tokens_total[5m]))",
+          "legendFormat": "embeddings",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Semantic Errors & Cache Hits",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(embedding_requests_total{status=\"error\"}[5m]))",
+          "legendFormat": "embedding errors",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(llm_requests_total{status=\"error\"}[5m]))",
+          "legendFormat": "llm errors",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(semantic_cache_hits_total{outcome=\"hit\"}[5m])) by (cache)",
+          "legendFormat": "cache hits",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "never"
+          }
+        }
       },
       "options": {
         "tooltip": {

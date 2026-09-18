@@ -162,6 +162,21 @@ class EventQuery(ListQuery):
     event_type: Annotated[str, Field(max_length=255)] | None = None
 
 
+class SearchQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    q: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1)] = Field(
+        max_length=500
+    )
+    k: int = Field(default=5, ge=1, le=20)
+
+
+class AskRequest(Body):
+    question: Annotated[
+        str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)
+    ]
+    k: int = Field(default=5, ge=1, le=20)
+
+
 def validate(schema, data):
     try:
         return schema.model_validate(data)

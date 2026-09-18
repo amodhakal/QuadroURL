@@ -1,12 +1,13 @@
 import json
 import logging
+import os
 import secrets
 import string
 import time
 from datetime import datetime, timezone
 
 from peewee import DataError, IntegrityError
-from models import Url
+from models import Url, UrlEmbedding
 
 
 logger = logging.getLogger("consumer.url_create")
@@ -62,6 +63,28 @@ def _expires_at_iso(value):
     return None
 
 
+def _embed_new_links(db, new_links):
+    """Best-effort semantic embeddings for freshly created URLs.
+
+    Runs after the batch transaction commits so rows are visible. Any failure
+    (no API key, quota exhausted, network, pre-migration DB) only skips
+    embeddings — creation already succeeded and ``backfill_embeddings.py``
+    covers the gap later.
+    """
+    from shared.openrouter import DEFAULT_EMBEDDING_MODEL, api_key
+    from shared.semantic import embed_links_batch
+
+    try:
+        key = api_key()
+    except Exception:
+        return
+    if not key:
+        return
+    model = os.environ.get("OPENROUTER_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    stored = embed_links_batch(db, UrlEmbedding, new_links, model=model, key=key)
+    logger.info(f"[url-creates] Embedded {stored}/{len(new_links)} new links (model={model})")
+
+
 def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
     """Create URLs for a batch of messages in one transaction + one Redis pipeline.
 
@@ -75,6 +98,7 @@ def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
     start = time.time()
     pending_results = []
     created_events = []
+    new_links = []
     created_count = 0
 
     try:
@@ -172,6 +196,7 @@ def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
                     # only the ready-status is (re)written so the retrying
                     # client unblocks without a duplicate row or event (#113).
                     continue
+                new_links.append((url.id, url.title, url.original_url))
                 created_events.append(
                     {
                         "url_id": url.id,
@@ -203,6 +228,9 @@ def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
         except Exception:
             logger.exception("Failed to write url-pending keys to Redis")
             return False, []
+
+    if new_links:
+        _embed_new_links(db, new_links)
 
     elapsed = time.time() - start
     logger.info(

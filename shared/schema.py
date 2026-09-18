@@ -13,6 +13,7 @@ from peewee import (
     BooleanField,
     CharField,
     DateTimeField,
+    Field,
     FloatField,
     ForeignKeyField,
     IntegerField,
@@ -23,6 +24,38 @@ from peewee import (
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+EMBEDDING_DIM = 1024
+
+
+class VectorField(Field):
+    """PostgreSQL pgvector column holding one dense embedding vector.
+
+    Stored DDL type is ``vector(EMBEDDING_DIM)`` on Postgres (requires the
+    ``vector`` extension, see ``migrations/004_embeddings.py``). SQLite
+    accepts the arbitrary type name, which keeps hermetic unit tests working;
+    vector similarity queries are Postgres-only and live in raw SQL.
+    """
+
+    field_type = f"vector({EMBEDDING_DIM})"
+
+    def db_value(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return "[" + ",".join(repr(float(v)) for v in value) + "]"
+
+    def python_value(self, value):
+        if value is None or isinstance(value, (list, tuple)):
+            return None if value is None else list(value)
+        text = str(value).strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        if not text:
+            return []
+        return [float(part) for part in text.split(",")]
 
 
 def create_models(database):
@@ -58,6 +91,23 @@ def create_models(database):
         def save(self, *args, **kwargs):
             self.updated_at = utcnow()
             return super().save(*args, **kwargs)
+
+    class UrlEmbedding(BaseModel):
+        """Dense embedding for one shortened link (semantic search / RAG).
+
+        One row per URL (PK on the URL FK, cascade on delete). The vector is
+        produced by the model named in ``model`` (see ``OPENROUTER_EMBEDDING_MODEL``)
+        from ``title`` + ``original_url``; ``content_hash`` is
+        ``sha256(title|original_url)`` so unchanged content is never re-embedded.
+        Similarity lookup uses pgvector cosine distance (``<=>``) in raw SQL —
+        Peewee has no vector operator support.
+        """
+
+        url = ForeignKeyField(Url, backref="embedding", primary_key=True, on_delete="CASCADE")
+        embedding = VectorField(null=True)
+        content_hash = CharField(max_length=64, default="")
+        model = CharField(max_length=128, default="")
+        updated_at = DateTimeField(default=utcnow)
 
     class LinkMetadata(BaseModel):
         url = ForeignKeyField(Url, backref="link_metadata", primary_key=True, on_delete="CASCADE")
@@ -112,6 +162,7 @@ def create_models(database):
         BaseModel=BaseModel,
         User=User,
         Url=Url,
+        UrlEmbedding=UrlEmbedding,
         Event=Event,
         RequestLog=RequestLog,
         ApiKey=ApiKey,

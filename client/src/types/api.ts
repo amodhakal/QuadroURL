@@ -41,3 +41,24 @@ export type UrlStatus =
     }
   | { status: "error"; error: string }
   | { status: "pending" }
+
+export interface SearchHit {
+  id: number
+  user_id: number
+  short_code: string
+  original_url: string
+  title: string
+  score: number
+}
+
+export interface SearchResponse {
+  kind: "search"
+  query: string
+  results: SearchHit[]
+}
+
+export interface AskResponse {
+  answer: string
+  model: string
+  sources: SearchHit[]
+}
