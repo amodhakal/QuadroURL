@@ -26,15 +26,18 @@ def dashboard_app(monkeypatch):
     with database.bind_ctx([User, ApiKey]):
         database.create_tables([User, ApiKey])
         owner = User.create(username="operator", email="operator@example.com")
+        owner.is_admin = True
+        owner.save()
         _, token = issue_api_key(owner.id)
         instance = Flask(__name__)
-        instance.config.update(TESTING=True, ADMIN_USER_IDS=str(owner.id))
+        instance.config.update(TESTING=True)
         instance.register_blueprint(dashboard_bp)
         monkeypatch.setattr(
             kafka_lag, "snapshot", lambda: {"available": True, "groups": {"logs": 7}}
         )
         client = instance.test_client()
         client.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+        client.owner = owner
         yield client
         database.close()
 
@@ -56,7 +59,8 @@ def test_stream_first_event_and_disconnect(dashboard_app):
 
 def test_stream_requires_admin(dashboard_app):
     assert dashboard_app.get("/dashboard/stream", headers={"Authorization": ""}).status_code == 401
-    dashboard_app.application.config["ADMIN_USER_IDS"] = ""
+    dashboard_app.owner.is_admin = False
+    dashboard_app.owner.save()
     assert dashboard_app.get("/dashboard/stream").status_code == 403
 
 

@@ -95,7 +95,7 @@ def is_bot_user_agent(user_agent: str) -> bool:
 
 
 def format_url(url):
-    data = model_to_dict(url, recurse=False)
+    data = model_to_dict(url, recurse=False, exclude={"request_fingerprint"})
     data["user_id"] = data.pop("user")
     data["expires_at"] = _expires_at_iso(data.get("expires_at"))
     return data

@@ -87,3 +87,17 @@ def test_stored_form_is_digest_not_secret(app, seed_auth):
         record = ApiKey.get_by_id(ApiKey.select().where(ApiKey.user == seed_auth.user.id).get().id)
         assert record.key_hash != seed_auth.api_key
         assert len(record.key_hash) == 64
+
+
+def test_admin_membership_comes_from_user_record(app, seed_auth, monkeypatch):
+    from flask import g
+
+    from app.utils.auth import is_admin
+
+    monkeypatch.setenv("ADMIN_USER_IDS", str(seed_auth.user.id))
+    with app.app_context():
+        g.current_user_id = seed_auth.user.id
+        assert is_admin() is False
+        seed_auth.user.is_admin = True
+        seed_auth.user.save()
+        assert is_admin() is True

@@ -1,15 +1,14 @@
 """Bearer authentication and ownership policy.
 
-Admin membership is operator-managed through ADMIN_USER_IDS (comma-separated
-numeric IDs), never through registration/update input or client headers.
+Admin membership is stored on the user record and is never supplied by
+registration, update input, or client headers.
 """
 
 import functools
 import hashlib
-import os
 import secrets
 
-from flask import abort, current_app, g, request
+from flask import abort, g, request
 
 
 def hash_key(raw):
@@ -26,10 +25,12 @@ def issue_api_key(user_id, name=""):
 
 
 def is_admin():
-    configured = current_app.config.get("ADMIN_USER_IDS", os.getenv("ADMIN_USER_IDS", ""))
-    ids = configured.split(",") if isinstance(configured, str) else (configured or [])
     user_id = getattr(g, "current_user_id", None)
-    return user_id is not None and str(user_id) in {str(i).strip() for i in ids if str(i).strip()}
+    if user_id is None:
+        return False
+    from app.models.user import User
+
+    return User.select(User.id).where((User.id == user_id) & User.is_admin).exists()
 
 
 def assert_owner(user_id):

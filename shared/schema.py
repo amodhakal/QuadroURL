@@ -71,7 +71,11 @@ def create_models(database):
         id = AutoField()
         username = CharField(unique=True)
         email = CharField(unique=True)
+        is_admin = BooleanField(default=False)
         created_at = DateTimeField(default=utcnow)
+
+        class Meta:
+            indexes = ((("is_admin", "id"), False),)
 
     class Url(BaseModel):
         id = AutoField()
@@ -82,11 +86,17 @@ def create_models(database):
         is_active = BooleanField(default=True)
         expires_at = DateTimeField(null=True, default=None)
         request_id = CharField(null=True, unique=True)
+        request_fingerprint = CharField(max_length=64, null=True, default=None)
         created_at = DateTimeField(default=utcnow)
         updated_at = DateTimeField(default=utcnow)
 
         class Meta:
-            indexes = ((("user",), False), (("is_active",), False), (("original_url",), False))
+            indexes = (
+                (("user",), False),
+                (("user", "id"), False),
+                (("is_active",), False),
+                (("original_url",), False),
+            )
 
         def save(self, *args, **kwargs):
             self.updated_at = utcnow()
@@ -109,6 +119,9 @@ def create_models(database):
         model = CharField(max_length=128, default="")
         updated_at = DateTimeField(default=utcnow)
 
+        class Meta:
+            indexes = ((("model", "updated_at"), False),)
+
     class LinkMetadata(BaseModel):
         url = ForeignKeyField(Url, backref="link_metadata", primary_key=True, on_delete="CASCADE")
         # Canonical JSON array of normalized tags; bounded at the API boundary.
@@ -122,14 +135,18 @@ def create_models(database):
         url = ForeignKeyField(Url, backref="events")
         user = ForeignKeyField(User, backref="events")
         event_type = CharField()
+        is_trusted = BooleanField(default=False)
+        source = CharField(max_length=64, default="")
         timestamp = DateTimeField(default=utcnow)
         details = TextField()
 
         class Meta:
             indexes = (
                 (("url", "user"), False),
+                (("url", "event_type", "timestamp"), False),
                 (("user", "event_type"), False),
                 (("user", "timestamp"), False),
+                (("user", "id"), False),
             )
 
     class RequestLog(BaseModel):
@@ -142,6 +159,7 @@ def create_models(database):
         status_code = IntegerField()
         latency_ms = FloatField()
         short_code = CharField(default="")
+        request_id = CharField(max_length=64, null=True, default=None)
         created_at = DateTimeField(default=utcnow)
 
         class Meta:
@@ -149,6 +167,7 @@ def create_models(database):
                 (("created_at",), False),
                 (("short_code",), False),
                 (("status_code",), False),
+                (("request_id",), False),
             )
 
     class ApiKey(BaseModel):
@@ -157,6 +176,15 @@ def create_models(database):
         key_hash = CharField(unique=True)
         name = CharField(default="")
         created_at = DateTimeField(default=utcnow)
+        expires_at = DateTimeField(null=True, default=None)
+        revoked_at = DateTimeField(null=True, default=None)
+        last_used_at = DateTimeField(null=True, default=None)
+
+        class Meta:
+            indexes = (
+                (("user", "id"), False),
+                (("user", "revoked_at"), False),
+            )
 
     return SimpleNamespace(
         BaseModel=BaseModel,

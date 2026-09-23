@@ -12,9 +12,11 @@ their existing operational paths.
 - Registration (`POST /users`) remains public and returns `api_key` once.
   All management requests use `Authorization: Bearer <key>`, including async
   creation status polling. Keys are hashed in storage and not placed in caches.
-- `ADMIN_USER_IDS=1,2` grants operator-managed administrator membership. Never
-  accept role input during registration. Administrators can manage other owners;
-  normal callers can only list/read/change/delete their own users, URLs and events.
+- Administrator membership is stored in `User.is_admin`; registration and update
+  input cannot grant it. The legacy `ADMIN_USER_IDS` setting is consumed only by
+  migration 005 to backfill existing rows and is not a runtime authorization source.
+  Administrators can manage other owners; normal callers can only list/read/change/delete
+  their own users, URLs and events.
   Foreign objects return 404, including before shared object-cache reads.
 - Bulk user import, logs, and the chaos kill switch require administrator access.
   The kill switch also retains its independent enable flag and token gate.

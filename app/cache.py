@@ -492,7 +492,7 @@ def _fetch_user(user_id):
 
     try:
         user = User.get_by_id(user_id)
-        return model_to_dict(user)
+        return model_to_dict(user, exclude={"is_admin"})
     except User.DoesNotExist:
         return None
 
@@ -572,7 +572,7 @@ def _fetch_url(url_id):
 
     try:
         url = Url.get_by_id(url_id)
-        data = model_to_dict(url, recurse=False)
+        data = model_to_dict(url, recurse=False, exclude={"request_fingerprint"})
         data["user_id"] = data.pop("user")
         return data
     except Url.DoesNotExist:
@@ -637,7 +637,7 @@ def _fetch_url_by_short_code(short_code):
 
     try:
         url = Url.select().where(Url.short_code == short_code).get()
-        data = model_to_dict(url, recurse=False)
+        data = model_to_dict(url, recurse=False, exclude={"request_fingerprint"})
         data["user_id"] = data.pop("user")
         return data
     except Url.DoesNotExist:

@@ -195,6 +195,7 @@ def publish_log_event(data: dict):
             status_code=data.get("status_code", 0),
             latency_ms=data.get("latency_ms", 0.0),
             short_code=data.get("short_code", ""),
+            request_id=data.get("request_id"),
         )
         return
     # Key by short code (or path) so one link's logs stay ordered (#161).
@@ -223,6 +224,8 @@ def publish_event(data: dict):
                 url_id=data.get("url_id"),
                 user_id=data.get("user_id"),
                 event_type=data.get("event_type"),
+                is_trusted=data.get("is_trusted") is True,
+                source=str(data.get("source") or "")[:64],
                 details=details,
             )
             if row.event_type == "click":
@@ -296,7 +299,7 @@ def _create_url_sync(data):
     if url is None:
         raise RuntimeError("Failed to generate unique short code")
 
-    result = model_to_dict(url, recurse=False)
+    result = model_to_dict(url, recurse=False, exclude={"request_fingerprint"})
     result["user_id"] = result.pop("user")
     # Serialize from the stored row (not the request): idempotent replays of
     # the same key must echo the original expiry (#113). PG TIMESTAMP strips

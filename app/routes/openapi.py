@@ -129,7 +129,7 @@ def build_spec():
                     " configured administrators may access all owners."
                 )
             if resource in ("logs", "fail") or path.endswith("/bulk"):
-                operation["description"] = "Administrator only (ADMIN_USER_IDS)."
+                operation["description"] = "Administrator only (user.is_admin)."
                 operation["responses"]["403"] = json_response("Administrator required", error)
             list_route = method == "GET" and not rule.arguments and resource in QUERY_SCHEMAS
             if list_route:

@@ -37,5 +37,6 @@ family. Redis is mocked and Kafka is not used. A consumer image build and isolat
 container import check additionally validate packaging and lazy connection binding.
 A live Kafka/PostgreSQL round trip is not covered by these checks.
 
-This change preserves the existing SQL schema; it does not implement the separate
-versioned-migrations request (#156).
+Schema changes are applied through the numbered migrations under `migrations/`;
+model definitions are the source used by both fresh-table creation and forward
+migrations.

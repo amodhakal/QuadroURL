@@ -6,7 +6,7 @@ from app.utils.kafka_producer import publish_event
 logger = logging.getLogger("quadroPE.events")
 
 
-def create_event(url_id, user_id, event_type, details_dict):
+def create_event(url_id, user_id, event_type, details_dict, *, is_trusted=False, source="api"):
     try:
         from app.utils.request_ctx import get_request_id
 
@@ -18,6 +18,8 @@ def create_event(url_id, user_id, event_type, details_dict):
             "url_id": url_id,
             "user_id": user_id,
             "event_type": event_type,
+            "is_trusted": is_trusted,
+            "source": str(source or "")[:64],
             "details": details_dict,
             "request_id": request_id,
             "created_at": datetime.now(timezone.utc).isoformat(),

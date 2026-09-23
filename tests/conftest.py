@@ -86,14 +86,11 @@ def client(app, seed_auth):
 
 
 @pytest.fixture()
-def admin_client(app, client, seed_auth, monkeypatch):
-    """Explicit administrator client for cross-user and operator route tests.
-
-    ``auth.is_admin`` resolves ADMIN_USER_IDS from app config (falling back to
-    the environment), so pinning config here scopes admin rights to this test
-    instead of leaking them into sibling sessions via the process env.
-    """
-    monkeypatch.setitem(app.config, "ADMIN_USER_IDS", str(seed_auth.user.id))
+def admin_client(app, client, seed_auth):
+    """Explicit administrator client for cross-user and operator route tests."""
+    with app.app_context():
+        seed_auth.user.is_admin = True
+        seed_auth.user.save()
     return client
 
 

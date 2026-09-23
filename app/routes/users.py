@@ -132,7 +132,7 @@ def get_user_cached(user_id):
         user = User.get_by_id(user_id)
     except User.DoesNotExist:
         abort(404)
-    data = model_to_dict(user)
+    data = model_to_dict(user, exclude={"is_admin"})
     set_user(user_id, data)
     return jsonify(data)
 
@@ -150,7 +150,7 @@ def create_user():
         current_app.logger.exception(f"Failed to create user: {e}")
         abort(400, description="Could not create user (duplicate?)")
 
-    result = model_to_dict(user)
+    result = model_to_dict(user, exclude={"is_admin"})
     set_user(user.id, result)
     clear_list_cache("list:users:")
     # Registration issues the caller's first bearer key inline (bootstrap:
@@ -183,7 +183,7 @@ def update_user(user_id):
     except Exception:
         current_app.logger.exception(f"Failed to update user id={user_id}")
         abort(400, description="Could not update user (duplicate?)")
-    data = model_to_dict(user)
+    data = model_to_dict(user, exclude={"is_admin"})
     set_user(user_id, data)
     clear_list_cache("list:users:")
     return jsonify(data)

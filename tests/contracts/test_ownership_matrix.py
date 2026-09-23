@@ -25,7 +25,9 @@ def test_destructive_ownership_matrix(app):
     owner, owner_headers = _actor(app, "destruct_owner")
     attacker, attacker_headers = _actor(app, "destruct_attacker")
     admin, admin_headers = _actor(app, "destruct_admin")
-    app.config["ADMIN_USER_IDS"] = str(admin.id)
+    with app.app_context():
+        admin.is_admin = True
+        admin.save()
     row = _url(app, owner, "doomed1")
     foreign = _url(app, attacker, "doomed2")
     client = app.test_client()
@@ -46,7 +48,9 @@ def test_destructive_ownership_matrix(app):
 def test_admin_surfaces_reject_non_admins(app):
     _, other_headers = _actor(app, "destruct_other")
     admin, admin_headers = _actor(app, "destruct_admin2")
-    app.config["ADMIN_USER_IDS"] = str(admin.id)
+    with app.app_context():
+        admin.is_admin = True
+        admin.save()
     client = app.test_client()
     assert client.get("/logs", headers=other_headers).status_code == 403
     assert client.get("/logs", headers=admin_headers).status_code == 200

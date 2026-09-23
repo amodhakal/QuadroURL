@@ -8,12 +8,15 @@ from peewee import (
     BlobField,
     BooleanField,
     CharField,
+    DateTimeField,
     FloatField,
     ForeignKeyField,
     IntegerField,
     Model,
     TextField,
 )
+
+from shared.schema import utcnow
 
 
 def create_delivery_models(database, core):
@@ -37,6 +40,10 @@ def create_delivery_models(database, core):
     class Receipt(Base):
         # Successful writes and their receipts commit in the same transaction.
         source = CharField(primary_key=True)
+        created_at = DateTimeField(default=utcnow)
+
+        class Meta:
+            indexes = ((("created_at",), False),)
 
     class Replay(Base):
         id = CharField(primary_key=True)
@@ -47,6 +54,16 @@ def create_delivery_models(database, core):
         available_at = FloatField(default=0, index=True)
         last_error = TextField(default="")
         requested_by = IntegerField()
+        created_at = DateTimeField(default=utcnow)
+        updated_at = DateTimeField(default=utcnow)
+        completed_at = DateTimeField(null=True, default=None)
+
+        class Meta:
+            indexes = ((("state", "created_at"), False),)
+
+        def save(self, *args, **kwargs):
+            self.updated_at = utcnow()
+            return super().save(*args, **kwargs)
 
     class Subscription(Base):
         id = AutoField()
@@ -66,6 +83,16 @@ def create_delivery_models(database, core):
         attempts = IntegerField(default=0)
         available_at = FloatField(default=0, index=True)
         last_error = TextField(default="")
+        created_at = DateTimeField(default=utcnow)
+        updated_at = DateTimeField(default=utcnow)
+        completed_at = DateTimeField(null=True, default=None)
+
+        class Meta:
+            indexes = ((("state", "created_at"), False),)
+
+        def save(self, *args, **kwargs):
+            self.updated_at = utcnow()
+            return super().save(*args, **kwargs)
 
     return SimpleNamespace(
         DeadLetter=DeadLetter,
