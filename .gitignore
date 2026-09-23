@@ -5,13 +5,20 @@ __pycache__/
 *.egg-info/
 *.egg
 dist/
+**/dist/
 build/
+**/build/
 
 # Virtual environment
 .venv/
+node_modules/
+**/node_modules/
 
 # Environment variables
 .env
+.env.*
+*.env
+!.env.example
 
 # IDE
 .vscode/
@@ -22,6 +29,12 @@ build/
 
 # pytest
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
 
 # OS
 .DS_Store
@@ -32,14 +45,32 @@ judging/
 
 # Coverage
 .coverage
-/coverage.xml
-/client/coverage/
+.coverage.*
+coverage/
+**/coverage/
+htmlcov/
+coverage.xml
+**/coverage.xml
+*.lcov
 venv/
 
 # Terraform
-terraform/.terraform.lock.hcl
-terraform/.terraform/
+.terraform/
+**/.terraform/
+.terraform.lock.hcl
+**/.terraform.lock.hcl
+.terraform.tfstate.lock.info
+**/.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.tfvars
+*.tfvars.json
+terraform.tfstate.d/
+**/terraform.tfstate.d/
 
 # Load-test artifacts (generated results + reports; keep sources like *.py/locustfiles tracked)
 loadtests/results_*/
 loadtests/*.pdf
+*.log

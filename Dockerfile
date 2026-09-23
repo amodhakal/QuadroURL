@@ -8,7 +8,10 @@ COPY pyproject.toml uv.lock ./
 
 RUN uv sync --frozen --no-dev
 
-COPY . .
+COPY app ./app
+COPY shared ./shared
+COPY migrations ./migrations
+COPY run.py gunicorn.conf.py migrations_runner.py ./
 
 ENV FLASK_DEBUG=false
 ENV PORT=8000

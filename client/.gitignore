@@ -7,12 +7,41 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
+node_modules/
+**/node_modules/
+dist/
+**/dist/
 dist-ssr
+coverage/
+**/coverage/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.lcov
 playwright-report/
 test-results/
 *.local
+
+.env
+.env.*
+*.env
+!.env.example
+
+.terraform/
+**/.terraform/
+.terraform.lock.hcl
+**/.terraform.lock.hcl
+.terraform.tfstate.lock.info
+**/.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.tfvars
+*.tfvars.json
+terraform.tfstate.d/
+**/terraform.tfstate.d/
 
 # Editor directories and files
 .vscode/*
