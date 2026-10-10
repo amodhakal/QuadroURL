@@ -35,6 +35,11 @@ services:
       - DATABASE_USER=${DATABASE_USER}
       - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - KAFKA_BROKER=kafka:9092
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
+      - SESSION_ALLOWED_ORIGINS=${APP_URL:-http://localhost}
+      - TRUSTED_PROXY_COUNT=1
+      - MAX_REQUEST_BODY_BYTES=${MAX_REQUEST_BODY_BYTES:-6291456}
     depends_on:
       migrate:
         condition: service_completed_successfully
