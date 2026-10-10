@@ -12,6 +12,20 @@ their existing operational paths.
 - Registration (`POST /users`) remains public and returns `api_key` once.
   All management requests use `Authorization: Bearer <key>`, including async
   creation status polling. Keys are hashed in storage and not placed in caches.
+  A bearer key can be exchanged at `POST /auth/session` for a same-origin,
+  HttpOnly `session` cookie. `GET /auth/session` returns the current user and
+  session-bound CSRF token; `DELETE /auth/session` (or `/auth/logout`) logs out.
+  Cookie-authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests require the
+  returned `X-CSRF-Token`; bearer-authenticated requests do not.
+- API keys are listed, created with an optional future `expires_at`, revoked by
+  id, and revoked together at `/auth/api-keys`. List responses never contain a
+  key digest or raw key, and all key-management responses use
+  `Cache-Control: no-store, private`. A user can have at most ten active keys.
+- `POST /auth/admin/bootstrap` is disabled unless `ADMIN_BOOTSTRAP_TOKEN` is
+  configured. It accepts a bootstrap token and either an existing `user_id` or
+  a new username/email pair, promotes the first administrator, and returns the
+  new key once. It cannot run after an administrator exists. Role changes use
+  the administrator-only `/admin/users/<user_id>/role` endpoint.
 - Administrator membership is stored in `User.is_admin`; registration and update
   input cannot grant it. The legacy `ADMIN_USER_IDS` setting is consumed only by
   migration 005 to backfill existing rows and is not a runtime authorization source.
@@ -59,9 +73,20 @@ old pending IDs without an owner record are intentionally no longer public.
 Rate limits run after authentication on management endpoints, sharing budgets
 between legacy and v1 aliases and across keys owned by one user. Public registration
 and redirects use trusted client-IP identification. Redis token buckets fail open
-on Redis outages. `RATELIMIT_ENABLED=false` disables them; TESTING bypasses them
-unless `RATELIMIT_IN_TESTS` is set. Responses include X-RateLimit headers (also on
+on Redis outages, except password-protected link checks, which fail closed with
+503. `RATELIMIT_ENABLED=false` disables them; TESTING bypasses them unless
+`RATELIMIT_IN_TESTS` is set. Responses include X-RateLimit headers (also on
 successful tuple responses), and 429 includes Retry-After.
+
+The application accepts at most 6 MiB by default (`MAX_REQUEST_BODY_BYTES`).
+Event `details` is independently limited to 16 KiB serialized JSON, depth 8,
+100 object keys, and 1000 list items. URL updates must contain at least one field.
+Datetimes in authentication, user, URL, and event responses are UTC ISO 8601.
+
+`TRUSTED_PROXY_COUNT` defaults to zero for direct deployments. The supplied
+Docker Nginx path sets it to one and uses `ProxyFix`; do not trust forwarding
+headers from an unconfigured direct listener. `SESSION_SECRET` is required in
+production, and production cookies default to `Secure`.
 
 ## Verification and integration notes
 
