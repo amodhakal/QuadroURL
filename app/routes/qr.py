@@ -53,8 +53,8 @@ def _scan_url(short_code):
 
 
 @qr_bp.get("/links/<int:url_id>/qr.svg")
-@require_auth
 @rate_limit(capacity=30, refill_rate=0.5)
+@require_auth
 def svg_qr(url_id):
     link = owned_link(url_id)
     options = parse_query(QrOptions)
@@ -99,8 +99,8 @@ def scan(short_code):
 
 
 @qr_bp.get("/links/<int:url_id>/qr-stats")
-@require_auth
 @rate_limit(capacity=100, refill_rate=2)
+@require_auth
 def scan_stats(url_id):
     from app.models.event import Event
 

@@ -9,8 +9,8 @@ fail_bp = Blueprint("fail", __name__)
 
 
 @fail_bp.route("/fail", methods=["GET"])
-@require_admin
 @rate_limit(capacity=2, refill_rate=0.1)
+@require_admin
 def fail():
     """Chaos kill-switch. Disabled unless explicitly enabled.
 

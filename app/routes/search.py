@@ -50,7 +50,6 @@ def _retrieve(question, k):
 @search_bp.route("/search", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def search():
     params = parse_query(SearchQuery)
     scope = _search_scope()
@@ -78,7 +77,6 @@ def search():
 @search_bp.route("/ask", methods=["POST"])
 @rate_limit(capacity=60, refill_rate=1.0)
 @require_auth
-@rate_limit(capacity=60, refill_rate=1.0)
 def ask():
     data = parse_body(AskRequest)
     question, k = data["question"], data.get("k", 5)

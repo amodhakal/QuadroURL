@@ -9,6 +9,7 @@ from app.models import Event, Url, User
 from app.utils.auth import require_auth, scope_query
 from app.utils.ratelimit import rate_limit
 from app.utils.schemas import ExportQuery, parse_query
+from app.utils.serialization import iso_datetime
 
 exports_bp = Blueprint("exports", __name__)
 MAX_ROWS = 1000
@@ -38,7 +39,7 @@ FIELDS = {
 
 
 def _serialize(value):
-    return value.isoformat() if hasattr(value, "isoformat") else value
+    return iso_datetime(value)
 
 
 def _csv_cell(value):
@@ -52,8 +53,8 @@ def _csv_cell(value):
 
 
 @exports_bp.route("/exports/<resource>", methods=["GET"])
-@require_auth
 @rate_limit(capacity=10, refill_rate=1.0)
+@require_auth
 def export_rows(resource):
     if resource not in FIELDS:
         abort(404)

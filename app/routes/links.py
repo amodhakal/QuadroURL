@@ -90,8 +90,8 @@ def invalidate(link):
 
 
 @links_bp.route("/links/<int:url_id>/metadata", methods=["GET", "PATCH"])
-@require_auth
 @rate_limit(capacity=30, refill_rate=0.5)
+@require_auth
 def metadata(url_id):
     from flask import request
 
@@ -116,8 +116,8 @@ def metadata(url_id):
 
 
 @links_bp.get("/links")
-@require_auth
 @rate_limit(capacity=300, refill_rate=5)
+@require_auth
 def search_links():
     from app.routes.urls import format_url
 
@@ -148,8 +148,8 @@ def search_links():
 
 
 @links_bp.post("/links/bulk-activation")
-@require_auth
 @rate_limit(capacity=30, refill_rate=0.5)
+@require_auth
 def bulk_activation():
     data = parse_body(BulkActivation)
     ids = sorted(set(data["ids"]))
