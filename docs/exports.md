@@ -11,9 +11,9 @@ row; `X-Has-More` and `X-Next-After-Id` provide continuation. Request each next
 page until has_more is false. Pages are not a consistent database snapshot;
 concurrent edits/deletions can change later pages.
 
-Ordinary users see only their own user row, URLs, and events. Operators listed
-in ADMIN_USER_IDS can export all owners. Credentials and internal idempotency
-keys are never exported. Responses prohibit caching and use attachment filenames.
+Ordinary users see only their own user row, URLs, and events. Users with
+`User.is_admin` can export all owners. Credentials and internal idempotency keys
+are never exported. Responses prohibit caching and use attachment filenames.
 CSV uses standard quoting plus an apostrophe prefix for formula-leading cells;
 JSON preserves original text. This deliberate safety transformation means CSV
 is not an exact round-trip for formula-like text. Bearer rate limit: burst 10,

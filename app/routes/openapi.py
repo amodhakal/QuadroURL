@@ -6,6 +6,7 @@ from flask import Blueprint, Response, current_app, jsonify
 
 from app.utils.schemas import (
     AnalyticsQuery,
+    AdminBootstrap,
     ApiKeyCreate,
     DeadLetterQuery,
     EventCreate,
@@ -13,6 +14,7 @@ from app.utils.schemas import (
     ExportQuery,
     ListQuery,
     ReplayRequest,
+    RoleUpdate,
     UrlCreate,
     UrlQuery,
     UrlUpdate,
@@ -70,6 +72,8 @@ def build_spec():
     schemas = {"Error": error, "Page": page}
     for model in set(BODY_SCHEMAS.values()) | {
         ReplayRequest,
+        AdminBootstrap,
+        RoleUpdate,
         AnalyticsQuery,
         ExportQuery,
         DeadLetterQuery,
@@ -83,8 +87,18 @@ def build_spec():
         path = re.sub(r"<(?:[^:>]+:)?([^>]+)>", r"{\1}", rule.rule)
         resource = rule.endpoint.split(".")[0].removesuffix("_v1")
         for method in sorted(rule.methods - {"HEAD", "OPTIONS"}):
-            public = (resource == "users" and method == "POST" and not path.endswith("/bulk")) or (
-                rule.endpoint.endswith((".redirect_short_code", ".redirect_short_code_legacy"))
+            session_exchange = resource == "auth" and path == "/auth/session" and method == "POST"
+            bootstrap = resource == "auth" and path in {
+                "/auth/admin/bootstrap",
+                "/auth/bootstrap-admin",
+                "/auth/bootstrap",
+            }
+            role_management = path.endswith("/role")
+            public = (
+                (resource == "users" and method == "POST" and not path.endswith("/bulk"))
+                or rule.endpoint.endswith((".redirect_short_code", ".redirect_short_code_legacy"))
+                or session_exchange
+                or bootstrap
             )
             parameters = []
             for name in sorted(rule.arguments):
@@ -102,7 +116,7 @@ def build_spec():
                 "operationId": f"{rule.endpoint.replace('.', '_')}_{method.lower()}",
                 "summary": rule.endpoint.split(".")[-1].replace("_", " ").capitalize(),
                 "tags": [resource],
-                "security": [] if public else [{"bearerAuth": []}],
+                "security": ([] if public else [{"bearerAuth": []}, {"sessionCookie": []}]),
                 "parameters": parameters,
                 "responses": {
                     "200": json_response("Success", {"type": "object"}),
@@ -120,16 +134,46 @@ def build_spec():
                     "503": json_response("Required dependency unavailable", error),
                 },
             }
+            if bootstrap:
+                parameters.append(
+                    {
+                        "name": "X-Admin-Bootstrap-Token",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                )
+                operation["responses"]["401"] = json_response("Invalid bootstrap token", error)
+            if session_exchange:
+                parameters.append(
+                    {
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                )
             if not public:
+                if method in {"POST", "PUT", "PATCH", "DELETE"}:
+                    parameters.append(
+                        {
+                            "name": "X-CSRF-Token",
+                            "in": "header",
+                            "required": False,
+                            "schema": {"type": "string"},
+                            "description": "Required when authenticating with the session cookie",
+                        }
+                    )
                 operation["responses"]["401"] = json_response(
-                    "Missing or invalid bearer key", error
+                    "Missing or invalid bearer key or session", error
                 )
                 operation["description"] = (
                     "Only owned resources are visible;"
                     " configured administrators may access all owners."
+                    " Cookie-authenticated unsafe methods require X-CSRF-Token."
                 )
-            if resource in ("logs", "fail") or path.endswith("/bulk"):
-                operation["description"] = "Administrator only (ADMIN_USER_IDS)."
+            if resource in ("logs", "fail") or path.endswith("/bulk") or role_management:
+                operation["description"] = "Administrator only (user.is_admin)."
                 operation["responses"]["403"] = json_response("Administrator required", error)
             list_route = method == "GET" and not rule.arguments and resource in QUERY_SCHEMAS
             if list_route:
@@ -148,6 +192,12 @@ def build_spec():
                 for name, schema in ExportQuery.model_json_schema()["properties"].items():
                     parameters.append({"name": name, "in": "query", "schema": schema})
             model = BODY_SCHEMAS.get((resource, method))
+            if resource == "auth" and path != "/auth/api-keys":
+                model = None
+            if role_management:
+                model = RoleUpdate
+            if bootstrap:
+                model = AdminBootstrap
             if path.endswith("/replay"):
                 model = ReplayRequest
             if path.endswith("/bulk"):
@@ -211,10 +261,12 @@ def build_spec():
             "title": "quadroURL API",
             "version": "1.0.0",
             "description": (
-                "Bearer-key API. Legacy unprefixed routes remain available with their"
-                " original list shapes. v1 lists return items and pagination; offset"
-                " order is ascending ID, before_id order descending. Do not mix"
-                " pagination styles. Logs are a changing in-memory snapshot."
+                "Bearer-key API with optional same-origin cookie sessions. Legacy"
+                " unprefixed routes remain available with their original list shapes."
+                " v1 lists return items and pagination; offset order is ascending ID,"
+                " before_id order descending. Do not mix pagination styles. Logs are"
+                " a changing in-memory snapshot. Cookie-authenticated unsafe methods"
+                " require a session-bound X-CSRF-Token."
             ),
         },
         "servers": [{"url": "/"}],
@@ -223,6 +275,14 @@ def build_spec():
             "schemas": schemas,
             "securitySchemes": {
                 "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "API key"},
+                "sessionCookie": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "session",
+                    "description": (
+                        "Same-origin HttpOnly session; unsafe methods require X-CSRF-Token"
+                    ),
+                },
             },
         },
     }

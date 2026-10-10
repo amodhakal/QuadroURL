@@ -16,6 +16,8 @@ Principle: **reads and observability fail open; writes and readiness fail closed
 | `get_l2()` bootstrap | Redis unreachable | Returns `None` and marks L2 unavailable for a 30 s cooldown (`#117`) | Open (degrades) |
 | Rate limiter, Redis unavailable | `get_l2()` returns `None` | Request is allowed | Open |
 | Rate limiter, Redis script error | Any exception from the token-bucket script | `logger.error`, request is allowed | Open |
+| Password-protected link limiter, Redis unavailable | Sensitive password check cannot obtain a limiter decision | `503`; password is not checked | Closed |
+| Session/bootstrap/API-key auth | Revoked, expired, or missing credential | `401`/`404` as appropriate; session is bound to its API key | Closed |
 | `/ready` | Postgres, Redis, or Kafka check fails | `503 {"status": "not_ready", "checks": {...}}` | Closed |
 | `/health` | Any dependency down | Still `200 {"status": "ok"}` — pure liveness, touches nothing | Open (by design) |
 | `track_metrics` (`after_request`) | `publish_log_event` raises | `app.logger.exception`, response unchanged; `REQUESTS_IN_PROGRESS` still decremented in `finally` | Open |
@@ -50,6 +52,9 @@ Notes:
 | `CHAOS_ENABLED` | `"false"` | Must be `"true"` for `/fail` to do anything; pair with `CHAOS_TOKEN` (`#100`) |
 | `ALERT_MONITOR_ENABLED` | `"false"` | Discord crash monitor only starts when `"true"` (same-process monitor cannot detect a real crash) |
 | `PROMETHEUS_MULTIPROC_DIR` | `/tmp/prometheus-multiproc` (Dockerfile) / unset locally | When set, metrics aggregate all workers via `MultiProcessCollector`; when unset, single-process behavior |
+| `SESSION_SECRET` | random in development; required in production | Signs the session cookie; production rejects missing/weak values |
+| `TRUSTED_PROXY_COUNT` | `0` direct, `1` in supplied Compose Nginx path | Number of proxies trusted by `ProxyFix` |
+| `MAX_REQUEST_BODY_BYTES` | `6291456` | Global request body limit; event details have a separate 16 KiB limit |
 
 ## Operator-visible effects
 

@@ -16,6 +16,7 @@ from app.models.url import Url
 from flask import g
 from app.utils.schemas import EventCreate, EventQuery, parse_body, parse_query
 from app.utils.pagination import bounds, cache_key as list_cache_key, paginate, envelope
+from app.utils.serialization import iso_datetime
 
 
 events_bp = Blueprint("events", __name__)
@@ -25,11 +26,28 @@ def format_event(event):
     d = model_to_dict(event, recurse=False)
     d["url_id"] = d.pop("url")
     d["user_id"] = {"id": d.pop("user")}
+    if "timestamp" in d:
+        d["timestamp"] = iso_datetime(d["timestamp"])
     try:
         d["details"] = json.loads(d["details"])
     except (json.JSONDecodeError, TypeError):
         d["details"] = {}
     return d
+
+
+def _normalize_event_payload(payload):
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = payload.get("sample", payload.get("items", []))
+    else:
+        return payload
+    if not isinstance(rows, list):
+        return payload
+    for row in rows:
+        if isinstance(row, dict) and "timestamp" in row:
+            row["timestamp"] = iso_datetime(row["timestamp"])
+    return payload
 
 
 def _require_int_query_param(name):
@@ -48,14 +66,13 @@ def _require_int_query_param(name):
 @events_bp.route("/events", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def list_events():
     params = parse_query(EventQuery)
     bounds(params)
     cache_key = list_cache_key("events", params)
     cached = get_list_cache(cache_key)
     if cached is not None:
-        return jsonify(cached)
+        return jsonify(_normalize_event_payload(cached))
 
     query = Event.select(
         Event.id,
@@ -86,7 +103,7 @@ def list_events():
                 "url_id": e.url_id,
                 "user_id": {"id": e.user_id},
                 "event_type": e.event_type,
-                "timestamp": e.timestamp.isoformat(),
+                "timestamp": iso_datetime(e.timestamp),
                 "details": details,
             }
         )
@@ -96,8 +113,8 @@ def list_events():
 
 
 @events_bp.route("/events", methods=["POST"])
-@require_auth
 @rate_limit(capacity=300, refill_rate=5.0)
+@require_auth
 def create_event():
     data = parse_body(EventCreate)
 
@@ -127,4 +144,6 @@ def create_event():
 
     current_app.logger.info(f"Event created: type={event_type} url_id={url_id}")
     clear_list_cache("list:events:")
-    return jsonify(format_event(event)), 201
+    data = format_event(event)
+    data["timestamp"] = iso_datetime(data.get("timestamp"))
+    return jsonify(data), 201

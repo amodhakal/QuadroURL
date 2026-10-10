@@ -17,6 +17,14 @@ The baseline adopts existing tables without deleting rows, adding legacy missing
 repair arbitrary hand-edited schemas. Do not edit applied migration modules; add
 a new numbered migration for future changes (including model field changes).
 
-Verified for this PR: SQLite runner tests; real PostgreSQL 16 CLI fresh install,
-repeat upgrade (no-op), and legacy URL adoption with original rows retained.
-No full application test suite was run.
+Verification covers SQLite runner tests, a disposable PostgreSQL 16 fresh install,
+repeat upgrade (no-op), legacy URL adoption, and the full Python test suite.
+
+Migration 005 adds the security and retention foundation to both fresh and
+legacy databases. It adds API-key lifecycle timestamps, URL request fingerprints,
+event provenance and request-log request IDs, and delivery lifecycle timestamps.
+It backfills existing administrator rows from the legacy `ADMIN_USER_IDS` value
+once, repairs duplicate non-null URL request IDs by retaining the earliest
+`created_at` row (using `id` as the tie-breaker), and installs a unique partial
+index over non-null request IDs. Runtime authorization reads `User.is_admin`;
+`ADMIN_USER_IDS` is not consulted after migration.

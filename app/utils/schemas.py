@@ -1,5 +1,6 @@
 """Request contracts shared by legacy/v1 handlers and the OpenAPI document."""
 
+import json
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from app.utils.url_safety import validate_destination
@@ -14,12 +15,72 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 Text = Annotated[
     str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=255)
 ]
 PositiveId = Annotated[StrictInt, Field(gt=0)]
+MAX_EVENT_DETAILS_BYTES = 16 * 1024
+MAX_EVENT_DETAILS_DEPTH = 8
+MAX_EVENT_DETAILS_KEYS = 100
+MAX_EVENT_DETAILS_ITEMS = 1000
+
+
+def validate_future_datetime(value):
+    if value is not None and not isinstance(value, str):
+        raise ValueError("expires_at must be a timezone-aware ISO 8601 string or null")
+    if value is None:
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("expires_at must be a timezone-aware ISO 8601 string or null") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("expires_at must include a timezone")
+    if parsed <= datetime.now(timezone.utc):
+        raise ValueError("expires_at must be in the future")
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_event_details(value):
+    key_count = 0
+
+    def walk(node, depth):
+        nonlocal key_count
+        if depth > MAX_EVENT_DETAILS_DEPTH:
+            raise ValueError("details nesting is too deep")
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if not isinstance(key, str):
+                    raise ValueError("details keys must be strings")
+                key_count += 1
+                if key_count > MAX_EVENT_DETAILS_KEYS:
+                    raise ValueError("details contains too many keys")
+                walk(child, depth + 1)
+        elif isinstance(node, list):
+            if len(node) > MAX_EVENT_DETAILS_ITEMS:
+                raise ValueError("details contains too many items")
+            for child in node:
+                walk(child, depth + 1)
+
+    walk(value, 1)
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("details must contain valid JSON values") from exc
+    if len(encoded) > MAX_EVENT_DETAILS_BYTES:
+        raise ValueError("details is too large")
+    return value
 
 
 class Body(BaseModel):
@@ -76,6 +137,12 @@ class UrlUpdate(Body):
     iso_expiry = field_validator("expires_at", mode="before")(UrlCreate.iso_expiry.__func__)
     aware_expiry = field_validator("expires_at")(UrlCreate.aware_expiry.__func__)
 
+    @model_validator(mode="after")
+    def require_change(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one field must be provided")
+        return self
+
 
 class EventCreate(Body):
     url_id: PositiveId
@@ -83,9 +150,58 @@ class EventCreate(Body):
     event_type: Text
     details: dict = Field(default_factory=dict)
 
+    @field_validator("details")
+    @classmethod
+    def bounded_details(cls, value):
+        return validate_event_details(value)
+
 
 class ApiKeyCreate(Body):
     name: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, max_length=255)] = ""
+    expires_at: datetime | None = None
+
+    @field_validator("expires_at", mode="before")
+    @classmethod
+    def iso_expiry(cls, value):
+        return validate_future_datetime(value)
+
+    @field_validator("expires_at")
+    @classmethod
+    def aware_expiry(cls, value):
+        if value is not None:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("expires_at must include a timezone")
+            if value <= datetime.now(timezone.utc):
+                raise ValueError("expires_at must be in the future")
+            return value.astimezone(timezone.utc)
+        return value
+
+
+class RoleUpdate(Body):
+    is_admin: StrictBool | None = None
+    role: Literal["admin", "user"] | None = None
+
+    @model_validator(mode="after")
+    def one_role_field(self):
+        if (self.is_admin is None) == (self.role is None):
+            raise ValueError("Provide exactly one of is_admin or role")
+        if self.role is not None:
+            self.is_admin = self.role == "admin"
+        return self
+
+
+class AdminBootstrap(Body):
+    user_id: PositiveId | None = None
+    username: Text | None = None
+    email: Text | None = None
+
+    @model_validator(mode="after")
+    def valid_identity(self):
+        if self.user_id is None and (self.username is None or self.email is None):
+            raise ValueError("Provide user_id or both username and email")
+        if self.user_id is not None and (self.username is not None or self.email is not None):
+            raise ValueError("Provide only user_id or both username and email")
+        return self
 
 
 class WebhookCreate(Body):

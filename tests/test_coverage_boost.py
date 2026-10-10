@@ -319,19 +319,20 @@ def test_request_ctx_branches(app, monkeypatch):
     # no request context
     assert rc.get_client_ip() == "unknown"
     assert isinstance(rc.get_request_id(), str)
-    with app.test_request_context("/", headers={"X-Real-IP": "1.2.3.4"}):
-        assert rc.get_client_ip() == "1.2.3.4"
-    with app.test_request_context("/", headers={"X-Real-IP": "1.1.1.1, 2.2.2.2"}):
-        assert rc.get_client_ip() == "1.1.1.1"
-    with app.test_request_context("/", headers={"X-Real-IP": "   "}):
-        # falls through to remote_addr
-        assert rc.get_client_ip() != ""
-    monkeypatch.setenv("TRUST_PROXY_XFF", "true")
-    with app.test_request_context("/", headers={"X-Forwarded-For": "9.9.9.9, 8.8.8.8"}):
-        assert rc.get_client_ip() == "8.8.8.8"
-    with app.test_request_context("/", headers={"X-Forwarded-For": "   "}):
-        assert isinstance(rc.get_client_ip(), str)
-    monkeypatch.delenv("TRUST_PROXY_XFF", raising=False)
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.1"}, headers={"X-Real-IP": "1.2.3.4"}
+    ):
+        assert rc.get_client_ip() == "10.0.0.1"
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.2"}, headers={"X-Real-IP": "1.1.1.1, 2.2.2.2"}
+    ):
+        assert rc.get_client_ip() == "10.0.0.2"
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.3"}, headers={"X-Forwarded-For": "9.9.9.9, 8.8.8.8"}
+    ):
+        assert rc.get_client_ip() == "10.0.0.3"
+    with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.4"}):
+        assert rc.get_client_ip() == "10.0.0.4"
     with app.test_request_context("/"):
         from flask import g
 

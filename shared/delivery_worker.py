@@ -7,6 +7,7 @@ import os
 import socket
 import ssl
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 TIMEOUT = 5
@@ -102,6 +103,7 @@ def publish_replay(producer, replay):
 def process_due(model, send, now=None, limit=50):
     """CAS leases allow restart recovery and multiple workers without long DB locks."""
     now = time.time() if now is None else now
+    now_at = datetime.fromtimestamp(now, timezone.utc)
     rows = list(
         model.select()
         .where((model.state == "pending") & (model.available_at <= now))
@@ -113,7 +115,7 @@ def process_due(model, send, now=None, limit=50):
         attempt = row.attempts + 1
         lease = now + LEASE_SECONDS
         claimed = (
-            model.update(attempts=attempt, available_at=lease)
+            model.update(attempts=attempt, available_at=lease, updated_at=now_at)
             .where(
                 (model.id == row.id)
                 & (model.state == "pending")
@@ -124,7 +126,10 @@ def process_due(model, send, now=None, limit=50):
         )
         if not claimed:
             continue
-        values = dict(state="sent", last_error="")
+        completed_at = datetime.now(timezone.utc)
+        values = dict(
+            state="sent", last_error="", updated_at=completed_at, completed_at=completed_at
+        )
         try:
             send(row)
         except Exception as exc:
@@ -132,7 +137,10 @@ def process_due(model, send, now=None, limit=50):
                 state="failed" if attempt >= MAX_ATTEMPTS else "pending",
                 available_at=now + min(3600, 2**attempt),
                 last_error=type(exc).__name__,
+                updated_at=completed_at,
             )
+            if attempt >= MAX_ATTEMPTS:
+                values["completed_at"] = completed_at
         model.update(**values).where(
             (model.id == row.id) & (model.attempts == attempt) & (model.available_at == lease)
         ).execute()

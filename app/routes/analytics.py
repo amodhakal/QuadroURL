@@ -68,8 +68,8 @@ def _parse_window():
 
 
 @analytics_bp.route("/urls/<short_code>/analytics", methods=["GET"])
-@require_auth
 @rate_limit(capacity=60, refill_rate=2.0)
+@require_auth
 def click_analytics(short_code):
     bucket, days = _parse_window()
     url = Url.get_or_none(Url.short_code == short_code)

@@ -24,7 +24,9 @@ def test_core_v1_lists_share_the_envelope(app):
     owner, headers = _actor(app, "envelope")
     admin, admin_headers = _actor(app, "envadmin")
     _actor(app, "envthird")
-    app.config["ADMIN_USER_IDS"] = str(admin.id)
+    with app.app_context():
+        admin.is_admin = True
+        admin.save()
     with app.app_context():
         for index in range(3):
             url = Url.create(

@@ -282,6 +282,7 @@ def run_request_log_consumer():
                 "status_code": data.get("status_code", 0),
                 "latency_ms": data.get("latency_ms", 0.0),
                 "short_code": data.get("short_code", ""),
+                "request_id": data.get("request_id"),
                 "created_at": data.get("created_at") or datetime.now(timezone.utc),
             }
             buffer.append((payload, msg))
@@ -357,6 +358,8 @@ def run_url_event_consumer():
                 "url_id": data.get("url_id", 0),
                 "user_id": data.get("user_id", 0),
                 "event_type": data.get("event_type", ""),
+                "is_trusted": data.get("is_trusted") is True,
+                "source": str(data.get("source") or "")[:64],
                 "details": details,
                 "timestamp": data.get("created_at") or data.get("timestamp") or None,
             }

@@ -35,6 +35,7 @@ from hashlib import sha256
 from app.utils.ratelimit import rate_limit
 from app.utils.schemas import UrlCreate, UrlUpdate, UrlQuery, parse_body, parse_query
 from app.utils.pagination import bounds, cache_key as list_cache_key, paginate, envelope
+from app.utils.serialization import iso_datetime
 
 
 urls_bp = Blueprint("urls", __name__)
@@ -95,9 +96,11 @@ def is_bot_user_agent(user_agent: str) -> bool:
 
 
 def format_url(url):
-    data = model_to_dict(url, recurse=False)
+    data = model_to_dict(url, recurse=False, exclude={"request_fingerprint"})
     data["user_id"] = data.pop("user")
-    data["expires_at"] = _expires_at_iso(data.get("expires_at"))
+    for field in ("expires_at", "created_at", "updated_at"):
+        if field in data:
+            data[field] = iso_datetime(data[field])
     return data
 
 
@@ -162,8 +165,8 @@ def _idempotency_key(data):
 
 
 @urls_bp.route("/urls", methods=["POST"])
-@require_auth
 @rate_limit(capacity=300, refill_rate=5.0)
+@require_auth
 def create_url():
     data = parse_body(UrlCreate)
     user_id = data.get("user_id", g.current_user_id)
@@ -218,6 +221,10 @@ def create_url():
         abort(500, description="Failed to generate unique short code")
 
     if created is not None:
+        if isinstance(created, dict):
+            for field in ("expires_at", "created_at", "updated_at"):
+                if field in created:
+                    created[field] = iso_datetime(created[field])
         current_app.logger.info(
             f"Short URL created with id={created.get('id')} short_code={created.get('short_code')}"
         )
@@ -239,7 +246,6 @@ def create_url():
 @urls_bp.route("/urls/<request_id>/status", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def get_url_status(request_id):
     from app.cache import get_l2
 
@@ -301,7 +307,7 @@ def get_url_status(request_id):
                 "short_code": status_data.get("short_code"),
                 "original_url": status_data.get("original_url"),
                 "title": status_data.get("title"),
-                "expires_at": status_data.get("expires_at"),
+                "expires_at": iso_datetime(status_data.get("expires_at")),
             }
         )
 
@@ -326,7 +332,6 @@ def _require_int_query_param(name):
 @urls_bp.route("/urls", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def list_urls():
     params = parse_query(UrlQuery)
     bounds(params)
@@ -366,9 +371,9 @@ def list_urls():
                 "original_url": u.original_url,
                 "title": u.title,
                 "is_active": u.is_active,
-                "expires_at": _expires_at_iso(u.expires_at),
-                "created_at": u.created_at.isoformat(),
-                "updated_at": u.updated_at.isoformat(),
+                "expires_at": iso_datetime(u.expires_at),
+                "created_at": iso_datetime(u.created_at),
+                "updated_at": iso_datetime(u.updated_at),
             }
             for u in urls
         ],
@@ -381,7 +386,6 @@ def list_urls():
 @urls_bp.route("/urls/<int:url_id>", methods=["GET"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def get_url_cached(url_id):
     owner = Url.get_or_none(Url.id == url_id)
     if owner is None:
@@ -389,6 +393,10 @@ def get_url_cached(url_id):
     require_owner(owner.user_id)
     cached = get_url(url_id)
     if cached is not None:
+        if isinstance(cached, dict):
+            for field in ("expires_at", "created_at", "updated_at"):
+                if field in cached:
+                    cached[field] = iso_datetime(cached[field])
         return jsonify(cached)
     try:
         url = Url.get_by_id(url_id)
@@ -408,7 +416,6 @@ def get_url_cached(url_id):
 @urls_bp.route("/urls/<int:url_id>", methods=["PUT"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def update_url(url_id):
     try:
         url = Url.get_by_id(url_id)
@@ -483,7 +490,6 @@ def update_url(url_id):
 @urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
 @rate_limit(capacity=300, refill_rate=5.0)
 @require_auth
-@rate_limit(capacity=300, refill_rate=5.0)
 def delete_url_endpoint(url_id):
     from app.database import db
 

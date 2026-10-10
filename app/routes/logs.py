@@ -10,8 +10,8 @@ logs_bp = Blueprint("logs", __name__)
 
 
 @logs_bp.route("/logs", methods=["GET"])
-@require_admin
 @rate_limit(capacity=60, refill_rate=1.0)
+@require_admin
 def get_logs():
     params = parse_query(ListQuery)
     offset, size = bounds(params)

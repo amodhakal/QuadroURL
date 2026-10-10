@@ -1,11 +1,13 @@
 import os
 import re
+import secrets
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import psutil
 
@@ -69,6 +71,107 @@ _kafka_check_lock = threading.Lock()
 KAFKA_CHECK_TTL_S = 10.0
 
 
+def _env_int(names, default, minimum=1, maximum=2**31 - 1):
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and value != "":
+            try:
+                value = int(value)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"Invalid {name} configuration") from exc
+            if not minimum <= value <= maximum:
+                raise RuntimeError(f"Invalid {name} configuration")
+            return value
+    return default
+
+
+def _env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"Invalid {name} configuration")
+
+
+def _is_production():
+    environment = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "")).lower()
+    return (
+        environment in {"production", "prod"}
+        or os.environ.get("FLASK_DEBUG", "").lower() == "false"
+    )
+
+
+def _session_secret(production):
+    value = os.environ.get("SESSION_SECRET") or os.environ.get("SECRET_KEY")
+    if value:
+        if production and (len(value) < 32 or value in {"change-me", "changeme", "secret", "dev"}):
+            raise RuntimeError("SESSION_SECRET must be a strong configured value in production")
+        return value
+    if production:
+        raise RuntimeError("SESSION_SECRET must be configured in production")
+    return secrets.token_urlsafe(32)
+
+
+def _configure_security(app):
+    production = _is_production()
+    session_secret = _session_secret(production)
+    session_lifetime = _env_int(
+        ("SESSION_LIFETIME_HOURS", "SESSION_TTL_HOURS"),
+        8,
+        maximum=24 * 30,
+    )
+    same_site = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax").strip().title()
+    if same_site not in {"Lax", "Strict"}:
+        raise RuntimeError("SESSION_COOKIE_SAMESITE must be Lax or Strict")
+    cookie_secure = _env_bool("SESSION_COOKIE_SECURE", production)
+    if production and not cookie_secure:
+        raise RuntimeError("SESSION_COOKIE_SECURE must be enabled in production")
+    max_body = _env_int(
+        ("MAX_REQUEST_BODY_BYTES", "MAX_CONTENT_LENGTH"),
+        6 * 1024 * 1024,
+        maximum=64 * 1024 * 1024,
+    )
+    proxy_count = _env_int(
+        ("TRUSTED_PROXY_COUNT", "TRUST_PROXY_COUNT"),
+        0,
+        minimum=0,
+        maximum=10,
+    )
+    app.config.update(
+        SECRET_KEY=session_secret,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE=same_site,
+        SESSION_COOKIE_SECURE=cookie_secure,
+        SESSION_COOKIE_NAME=os.environ.get("SESSION_COOKIE_NAME", "session"),
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=session_lifetime),
+        SESSION_REFRESH_EACH_REQUEST=False,
+        SESSION_ALLOWED_ORIGINS=os.environ.get("SESSION_ALLOWED_ORIGINS", ""),
+        MAX_CONTENT_LENGTH=max_body,
+        TRUSTED_PROXY_COUNT=proxy_count,
+    )
+    if proxy_count:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=proxy_count,
+            x_proto=proxy_count,
+            x_host=proxy_count,
+            x_port=proxy_count,
+            x_prefix=proxy_count,
+        )
+
+    @app.before_request
+    def enforce_request_body_limit():
+        if (
+            request.content_length is not None
+            and request.content_length > app.config["MAX_CONTENT_LENGTH"]
+        ):
+            abort(413, description="Request body too large")
+
+
 def _cached_kafka_check(app, get_producer_fn):
     """Lightweight cached Kafka readiness probe (#140)."""
     now = time.monotonic()
@@ -93,6 +196,7 @@ def _cached_kafka_check(app, get_producer_fn):
 def create_app():
     load_dotenv()
     app = Flask(__name__)
+    _configure_security(app)
     configure_logging(app)
     init_db(app)
 

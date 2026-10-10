@@ -97,7 +97,9 @@ def test_admin_and_scope(app, monkeypatch):
     admin, admin_headers = actor(app, "admin")
     other, other_headers = actor(app, "other")
     seed(app, other, short_code="other1")
-    app.config["ADMIN_USER_IDS"] = str(admin.id)
+    with app.app_context():
+        admin.is_admin = True
+        admin.save()
     assert client_admin(app, admin_headers, "/users").status_code == 200
     body = client_admin(app, admin_headers, "/users").json
     assert [u["username"] for u in body["sample"]] == ["admin", "other"]

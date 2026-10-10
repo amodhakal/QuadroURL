@@ -202,6 +202,8 @@ def handle_url_create_batch(messages, db, redis_client, *, raise_poison=False):
                         "url_id": url.id,
                         "user_id": url.user_id,
                         "event_type": "created",
+                        "is_trusted": False,
+                        "source": "url-create",
                         "details": {
                             "short_code": url.short_code,
                             "original_url": url.original_url,

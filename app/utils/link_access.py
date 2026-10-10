@@ -25,7 +25,7 @@ def _password_budget():
     return f"link-password:{get_client_ip()}"
 
 
-@rate_limit(capacity=10, refill_rate=0.1, key_func=_password_budget)
+@rate_limit(capacity=10, refill_rate=0.1, key_func=_password_budget, fail_closed=True)
 def _check_password(password_hash):
     password = request.headers.get("X-Link-Password", "")
     if request.method == "POST":
