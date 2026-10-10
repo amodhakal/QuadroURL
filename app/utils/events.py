@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.utils.kafka_producer import publish_event
+from app.utils.schemas import validate_event_details
 
 logger = logging.getLogger("quadroPE.events")
 
@@ -20,7 +21,7 @@ def create_event(url_id, user_id, event_type, details_dict, *, is_trusted=False,
             "event_type": event_type,
             "is_trusted": is_trusted,
             "source": str(source or "")[:64],
-            "details": details_dict,
+            "details": validate_event_details(details_dict),
             "request_id": request_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
