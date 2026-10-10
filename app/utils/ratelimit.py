@@ -55,15 +55,32 @@ def get_script(client):
 def default_key_func():
     from app.utils.request_ctx import get_client_ip
 
+    if not hasattr(g, "current_user_id"):
+        try:
+            from app.utils.auth import authenticate_request
+
+            authenticated = authenticate_request()
+            if authenticated is not None and authenticated[0] is not None:
+                record, method = authenticated
+                g.api_key_id = record.id
+                g.current_user_id = record.user_id
+                g.auth_method = method
+        except Exception:
+            pass
     actor = (
         f"user:{g.current_user_id}" if hasattr(g, "current_user_id") else f"ip:{get_client_ip()}"
     )
-    # Aliases share one budget; neither changing IDs nor API version resets it.
     endpoint = (request.endpoint or "unmatched").replace("_v1.", ".")
     return f"{actor}:{endpoint}"
 
 
-def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600):
+def rate_limit(
+    capacity=10,
+    refill_rate=1.0,
+    key_func=default_key_func,
+    ttl=3600,
+    fail_closed=False,
+):
     """
     Distributed Token Bucket Rate Limiting decorator using Redis Lua script.
 
@@ -98,14 +115,21 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
             if bypass:
                 return f(*args, **kwargs)
 
+            def unavailable():
+                if not fail_closed:
+                    return f(*args, **kwargs)
+                response = jsonify({"error": "Rate limiter unavailable"})
+                response.status_code = 503
+                response.headers["Retry-After"] = "1"
+                return response
+
             try:
                 client = get_l2()
             except Exception:
                 logger.exception("Rate limiter connection unavailable")
-                return f(*args, **kwargs)
+                return unavailable()
             if client is None:
-                # Fail open if Redis is unavailable
-                return f(*args, **kwargs)
+                return unavailable()
 
             identifier = key_func()
             tokens_key = f"ratelimit:{identifier}:tokens"
@@ -121,8 +145,7 @@ def rate_limit(capacity=10, refill_rate=1.0, key_func=default_key_func, ttl=3600
                 remaining = float(result[1])
             except Exception as e:
                 logger.error(f"Rate limiter error: {e}")
-                # Fail open on Redis errors
-                return f(*args, **kwargs)
+                return unavailable()
 
             retry_after = 0
             if not allowed and refill_rate > 0:
