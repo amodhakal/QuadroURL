@@ -17,3 +17,14 @@ variable "fargate_task_count" {
   type    = number
   default = 4
 }
+
+variable "domain_name" {
+  type        = string
+  description = <<-EOT
+    Fully qualified application domain served by the ALB (e.g. app.example.com).
+    The parent domain must already exist as a public Route 53 hosted zone in this
+    account and region before `terraform apply`, otherwise ACM DNS validation
+    cannot complete.
+  EOT
+  default     = "app.example.com"
+}

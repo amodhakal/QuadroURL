@@ -3,6 +3,16 @@ output "alb_dns_name" {
   description = "Application Load Balancer URL"
 }
 
+output "domain_name" {
+  value       = var.domain_name
+  description = "Public HTTPS domain served by the ALB"
+}
+
+output "acm_certificate_arn" {
+  value       = aws_acm_certificate_validation.app.certificate_arn
+  description = "ARN of the validated ACM certificate used by the HTTPS listener"
+}
+
 output "loadtester_public_ip" {
   value       = aws_instance.loadtester.public_ip
   description = "Load tester EC2 public IP"
