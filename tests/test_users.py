@@ -224,10 +224,12 @@ def test_delete_user(owner_client, sample_user):
     assert response.status_code == 200
 
 
-def test_delete_user_nonexistent(client):
+def test_delete_user_nonexistent(client, admin_client):
     response = client.delete("/users/99999")
     # Ownership is checked before existence for ordinary users.
     assert response.status_code == 404
+    # Administrators skip the ownership check, so the missing row is 404 too.
+    assert admin_client.delete("/users/99999").status_code == 404
 
 
 def test_get_user_cached_db_fetch_when_cache_misses(app, owner_client, sample_user, monkeypatch):

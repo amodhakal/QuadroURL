@@ -16,7 +16,7 @@ def init_db(app):
         host=os.environ.get("DATABASE_HOST", "localhost"),
         port=int(os.environ.get("DATABASE_PORT", 5432)),
         user=os.environ.get("DATABASE_USER", "postgres"),
-        password=os.environ.get("DATABASE_PASSWORD", "postgres"),
+        password=os.environ["DATABASE_PASSWORD"],
         # NOTE (#157): per gunicorn *worker process* pool (gthread threads
         # share it). Budgeted against Postgres max_connections — see
         # docs/capacity.md scaling rule before changing this default.

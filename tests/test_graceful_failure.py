@@ -212,11 +212,13 @@ def test_create_url_float_user_id(client):
     assert_clean_json_error(response, 400)
 
 
-def test_create_url_null_user_id(client):
-    response = client.post(
+def test_create_url_null_user_id(owner_client, sample_user):
+    """Explicit null falls back to the caller's own id (#302)."""
+    response = owner_client.post(
         "/urls", json={"user_id": None, "original_url": "https://x.com", "title": "T"}
     )
-    assert_clean_json_error(response, 400)
+    assert response.status_code == 201
+    assert response.get_json()["user_id"] == sample_user.id
 
 
 def test_create_url_nonexistent_user(admin_client):

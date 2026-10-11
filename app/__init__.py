@@ -105,6 +105,26 @@ def _is_production():
     )
 
 
+# Baseline headers applied to every response (#303). The API is JSON-first, so
+# the default policy denies every fetch; the handful of HTML routes
+# (/dashboard, /docs) override the CSP with one that allows their CDN.
+_SECURITY_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    ),
+)
+
+_HSTS_HEADER = ("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+
+def _security_headers(production):
+    return _SECURITY_HEADERS + ((_HSTS_HEADER,) if production else ())
+
+
 def _session_secret(production):
     value = os.environ.get("SESSION_SECRET") or os.environ.get("SECRET_KEY")
     if value:
@@ -171,6 +191,16 @@ def _configure_security(app):
         ):
             abort(413, description="Request body too large")
 
+    @app.after_request
+    def apply_security_headers(response):
+        # ``setdefault`` so a route that deliberately chose a stricter or
+        # otherwise different value (e.g. the QR ``sandbox`` policy) wins.
+        # This runs last-registered-first, before ``track_metrics`` adds
+        # X-Request-ID, and both only ever set their own header.
+        for header, value in _security_headers(_is_production()):
+            response.headers.setdefault(header, value)
+        return response
+
 
 def _cached_kafka_check(app, get_producer_fn):
     """Lightweight cached Kafka readiness probe (#140)."""
@@ -199,6 +229,12 @@ def create_app():
     _configure_security(app)
     configure_logging(app)
     init_db(app)
+
+    from app.utils.ratelimit import warn_if_disabled
+    from app.utils.request_ctx import warn_if_proxy_untrusted
+
+    warn_if_disabled()
+    warn_if_proxy_untrusted()
 
     from app import models  # noqa: F401
 

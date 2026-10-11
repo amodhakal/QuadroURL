@@ -47,16 +47,32 @@ resource "aws_ecs_service" "consumer" {
   name            = each.key
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.consumer[each.key].arn
-  desired_count   = 3
+  desired_count   = var.consumer_task_count
+
+  # Same base + burst split as the app service: consumers must not be
+  # 100% spot, otherwise Kafka consumption stalls whenever spot is reclaimed.
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = var.base_capacity_weight
+    base              = var.base_capacity_count
+  }
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
-    weight            = 1
+    weight            = var.spot_capacity_weight
   }
 
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  deployment_maximum_percent         = var.deployment_maximum_percent
+  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
+
   network_configuration {
-    subnets          = aws_subnet.public[*].id
+    subnets          = aws_subnet.private[*].id
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 }

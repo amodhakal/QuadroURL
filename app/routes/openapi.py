@@ -1,8 +1,9 @@
 """OpenAPI 3.1 built from the live route map and shared input contracts."""
 
 import re
+import threading
 
-from flask import Blueprint, Response, current_app, jsonify
+from flask import Blueprint, Response, current_app
 
 from app.utils.schemas import (
     AnalyticsQuery,
@@ -47,6 +48,36 @@ def json_response(description, schema=None):
     if schema is not None:
         result["content"] = {"application/json": {"schema": schema}}
     return result
+
+
+# The document is a pure function of the route map, which is fixed once the app
+# is built, so rebuilding it per request is pure waste (#302). Cache the
+# serialized payload keyed by url_map identity; the cache holds a strong
+# reference to the map so ids cannot be recycled behind our back.
+_SPEC_CACHE = {}
+_SPEC_LOCK = threading.Lock()
+
+
+def invalidate_spec_cache():
+    """Drop the memoized spec (call after adding or removing routes)."""
+    with _SPEC_LOCK:
+        _SPEC_CACHE.clear()
+
+
+def cached_spec():
+    """Return ``(spec, serialized_json)`` for the current app's route map."""
+    url_map = current_app.url_map
+    key = id(url_map)
+    with _SPEC_LOCK:
+        hit = _SPEC_CACHE.get(key)
+    if hit is not None and hit[0] is url_map:
+        return hit[1], hit[2]
+
+    spec = build_spec()
+    payload = current_app.json.dumps(spec)
+    with _SPEC_LOCK:
+        _SPEC_CACHE[key] = (url_map, spec, payload)
+    return spec, payload
 
 
 def build_spec():
@@ -291,13 +322,14 @@ def build_spec():
 @docs_bp.get("/openapi.json")
 @docs_bp.get("/api/v1/openapi.json")
 def openapi():
-    return jsonify(build_spec())
+    _, payload = cached_spec()
+    return Response(payload, content_type="application/json")
 
 
 @docs_bp.get("/docs")
 @docs_bp.get("/api/v1/docs")
 def docs():
-    return Response(
+    response = Response(
         """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>quadroURL API docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -308,3 +340,11 @@ def docs():
 persistAuthorization:false,validatorUrl:null});</script></body></html>""",
         mimetype="text/html",
     )
+    # Overrides the app-wide deny-all default: Swagger UI pulls its CSS/JS
+    # from a CDN and runs an inline bootstrap script.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' https://cdn.jsdelivr.net"
+    )
+    return response
