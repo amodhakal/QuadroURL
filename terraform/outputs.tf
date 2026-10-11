@@ -33,17 +33,37 @@ output "kafka_private_ip" {
   description = "Kafka broker private IP"
 }
 
-output "aws_region" {
-  value       = var.aws_region
-  description = "AWS region the stack is deployed into. Required by scripts/deploy.sh for ECR login and ECS calls."
+output "db_identifier" {
+  value       = aws_db_instance.postgres.identifier
+  description = "RDS instance identifier"
 }
 
-output "alb_url" {
-  value       = "http://${aws_lb.main.dns_name}"
-  description = "Fully qualified application URL the load tester should target"
+output "db_endpoint" {
+  value       = aws_db_instance.postgres.endpoint
+  description = "RDS PostgreSQL endpoint (host:port), usable from the private subnets"
 }
 
-output "ecs_log_group_name" {
-  value       = aws_cloudwatch_log_group.ecs.name
-  description = "CloudWatch log group holding app and consumer container logs"
+output "db_address" {
+  value       = aws_db_instance.postgres.address
+  description = "RDS PostgreSQL hostname"
+}
+
+output "db_port" {
+  value       = aws_db_instance.postgres.port
+  description = "RDS PostgreSQL port"
+}
+
+output "db_multi_az" {
+  value       = aws_db_instance.postgres.multi_az
+  description = "Whether the RDS instance has a standby in a second Availability Zone"
+}
+
+output "db_backup_retention_period" {
+  value       = aws_db_instance.postgres.backup_retention_period
+  description = "Days automated RDS snapshots are retained"
+}
+
+output "db_final_snapshot_identifier" {
+  value       = local.db_final_snapshot_identifier
+  description = "Identifier of the snapshot taken when the RDS instance is destroyed"
 }

@@ -18,99 +18,65 @@ variable "fargate_task_count" {
   default = 4
 }
 
-variable "consumer_task_count" {
-  description = "Desired number of tasks for each consumer service (request-log, url-event, url-create)."
-  type        = number
-  default     = 3
+variable "db_instance_class" {
+  description = "RDS instance class for the PostgreSQL database. Gravitational (db.t4g) does not support Performance Insights; use db.t3.medium or larger if Performance Insights is required."
+  type        = string
+  default     = "db.t4g.medium"
 }
 
-variable "enable_nat_gateway" {
-  description = <<-EOT
-    Create a NAT gateway so tasks in private subnets have outbound internet
-    access (image pulls, AWS APIs, third-party calls). A NAT gateway costs per
-    hour plus per GB, so ephemeral environments can set this to false when no
-    external egress is needed. Note this only provisions a single-AZ NAT
-    gateway in the first public subnet; see terraform/vpc.tf for the
-    availability trade-off.
-  EOT
-  type        = bool
-  default     = true
-}
-
-variable "base_capacity_weight" {
-  description = "Weight of the on-demand FARGATE base capacity provider. Must be > 0 to guarantee baseline capacity."
-  type        = number
-  default     = 1
-}
-
-variable "base_capacity_count" {
-  description = "Minimum number of tasks that run on on-demand FARGATE, unaffected by spot interruptions."
-  type        = number
-  default     = 2
-}
-
-variable "spot_capacity_weight" {
-  description = "Relative weight of FARGATE_SPOT used as burst capacity on top of the on-demand base."
-  type        = number
-  default     = 3
-}
-
-variable "autoscaling_min_capacity" {
-  description = "Minimum number of app tasks the autoscaling target may scale down to. Must be >= base_capacity_count."
-  type        = number
-  default     = 2
-}
-
-variable "autoscaling_max_capacity" {
-  description = "Maximum number of app tasks the autoscaling target may scale out to."
+variable "db_allocated_storage" {
+  description = "Initial allocated storage (GiB) for the PostgreSQL database. RDS storage auto-enables storage autoscaling once this is reached."
   type        = number
   default     = 20
 }
 
-variable "autoscaling_cpu_target" {
-  description = "Target average CPU utilisation (%) for the app service CPU tracking policy."
+variable "db_multi_az" {
+  description = "Deploy a synchronous standby in a second Availability Zone for automatic failover. Doubles instance cost and requires the db subnet group to span at least two AZs."
+  type        = bool
+  default     = true
+}
+
+variable "db_backup_retention_period" {
+  description = "Number of days automated snapshots are retained. 0 disables automated backups entirely and is not recommended for anything but throwaway environments."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.db_backup_retention_period >= 0 && var.db_backup_retention_period <= 35
+    error_message = "db_backup_retention_period must be between 0 and 35 days."
+  }
+}
+
+variable "db_backup_window" {
+  description = "Daily UTC window for automated snapshots, in HH:MM-HH:MM format. Kept outside peak hours so backups do not compete with application traffic."
+  type        = string
+  default     = "03:00-04:00"
+
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$", var.db_backup_window))
+    error_message = "db_backup_window must be in HH:MM-HH:MM format."
+  }
+}
+
+variable "db_final_snapshot_identifier" {
+  description = "Identifier for the snapshot taken when the instance is destroyed. Defaults to \"<project_name>-final\"; deterministic and timestamp-free, so clear or rename any existing snapshot with this identifier before destroying or the destroy will fail."
+  type        = string
+  default     = null
+}
+
+variable "db_monitoring_interval" {
+  description = "Enhanced Monitoring granularity in seconds. 0 disables Enhanced Monitoring. Costs more for longer retention (default CloudWatch Logs retention applies)."
   type        = number
   default     = 60
+
+  validation {
+    condition     = contains([0, 1, 5, 10, 15, 30, 60], var.db_monitoring_interval)
+    error_message = "db_monitoring_interval must be one of 0, 1, 5, 10, 15, 30 or 60 seconds."
+  }
 }
 
-variable "autoscaling_memory_target" {
-  description = "Target average memory utilisation (%) for the app service memory tracking policy."
-  type        = number
-  default     = 70
-}
-
-variable "autoscaling_alb_requests_target" {
-  description = "Target number of requests per target for the ALBRequestCountPerTarget tracking policy. Set to 0 to disable request-count scaling."
-  type        = number
-  default     = 100
-}
-
-variable "autoscaling_scale_out_cooldown" {
-  description = "Seconds to wait after a scale-out activity before scaling out again."
-  type        = number
-  default     = 60
-}
-
-variable "autoscaling_scale_in_cooldown" {
-  description = "Seconds to wait after a scale-in activity before scaling in again."
-  type        = number
-  default     = 300
-}
-
-variable "deployment_maximum_percent" {
-  description = "Maximum percentage of tasks to run during a deployment, relative to desired_count."
-  type        = number
-  default     = 200
-}
-
-variable "deployment_minimum_healthy_percent" {
-  description = "Minimum percentage of tasks that must stay healthy during a deployment."
-  type        = number
-  default     = 100
-}
-
-variable "log_retention_days" {
-  description = "CloudWatch Logs retention for the ECS log group. Valid values are the documented aws_cloudwatch_log_group values (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, ...)."
-  type        = number
-  default     = 30
+variable "db_monitoring_role_arn" {
+  description = "IAM role ARN for RDS Enhanced Monitoring to publish metrics to CloudWatch. When null, AWS creates and uses a service role automatically; supply one explicitly if your account restricts that behaviour."
+  type        = string
+  default     = null
 }
