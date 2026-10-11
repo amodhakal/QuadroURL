@@ -59,7 +59,20 @@ def decode_message(msg):
 
 
 def schedule_milestones(core, delivery, url_id):
-    """Called within the click transaction, after locking its URL row."""
+    """Schedule one delivery per subscription whose milestone was reached.
+
+    Takes a row lock on the URL before counting clicks. Counting unlocked let
+    two consumers each read a count that excluded the other's uncommitted
+    click, so a milestone could be skipped entirely (#303). The lock mirrors
+    ``app.utils.auth``: ``FOR UPDATE`` on PostgreSQL, plain read where the
+    backend has no row locks (SQLite).
+    """
+    url_model = core.Event.url.rel_model
+    locked = url_model.select(url_model.id).where(url_model.id == url_id)
+    try:
+        locked.for_update().get()
+    except ValueError:
+        locked.get()
     count = (
         core.Event.select()
         .where((core.Event.url == url_id) & (core.Event.event_type == "click"))

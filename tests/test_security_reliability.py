@@ -211,7 +211,10 @@ def test_direct_client_ip_does_not_trust_forwarding_headers(app):
         assert get_client_ip() not in {"203.0.113.10", "198.51.100.2"}
 
 
-def test_password_rate_limit_can_fail_closed(app, sample_user, sample_url, monkeypatch):
+def test_password_rate_limit_stays_enforced_when_redis_down(
+    app, sample_user, sample_url, monkeypatch
+):
+    """Redis outage must not let password attempts through unlimited (#300)."""
     from app.database import models
     import app.utils.ratelimit as limiter
 
@@ -221,7 +224,13 @@ def test_password_rate_limit_can_fail_closed(app, sample_user, sample_url, monke
         LinkMetadata.insert(url=sample_url.id, password_hash="hash").on_conflict_ignore().execute()
     monkeypatch.setitem(app.config, "TESTING", False)
     monkeypatch.setattr(limiter, "get_l2", lambda: None)
-    response = app.test_client().get(
-        f"/r/{sample_url.short_code}", headers={"Accept": "application/json"}
-    )
-    assert response.status_code == 503
+    limiter.reset_local_buckets()
+    client = app.test_client()
+    headers = {"Accept": "application/json"}
+    statuses = [
+        client.get(f"/r/{sample_url.short_code}", headers=headers).status_code
+        for _ in range(12)
+    ]
+    # The in-process bucket takes over, so the budget of 10 is still enforced.
+    assert 429 in statuses
+    assert statuses[-1] == 429
