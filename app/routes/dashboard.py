@@ -496,6 +496,12 @@ def dashboard_stream():
 @dashboard_bp.route("/dashboard")
 @require_admin
 def dashboard():
-    # The page itself names the internal stack and drives the metrics stream,
-    # so it carries the same admin gate as the stream (#302).
-    return Response(DASHBOARD_HTML, content_type="text/html")
+    response = Response(DASHBOARD_HTML, content_type="text/html")
+    # Overrides the app-wide deny-all default: this page ships an inline
+    # stylesheet/script plus Chart.js from a CDN.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; connect-src 'self'"
+    )
+    return response

@@ -65,6 +65,8 @@ def resolve_public_link(short_code):
         # Rate limiter returns a tuple/Response instead of raising.
         if response.status_code != 200:
             abort(response)
+    # Reputation verdicts are TTL-cached, so this is a cache read on every
+    # redirect after the first and a provider call only on a miss.
     require_destination_safe(link.original_url)
     return format_url(link)
 

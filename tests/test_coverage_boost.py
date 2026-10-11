@@ -1170,31 +1170,28 @@ def test_cache_invalidation_and_scan(app, monkeypatch):
     e2, is_p2 = Cc._acquire_inflight(key)
     assert is_p2 is False
     Cc._clear_inflight_event(key)
-    # primary exception propagates
+    # primary exception propagates and is never negative-cached (#301)
+    failed_key = f"cov-miss-{time.time()}"
     with pytest.raises(Exception):
-        Cc._resolve_miss(
-            f"cov-miss-{time.time()}", lambda: (_ for _ in ()).throw(Exception("db down")), 10
-        )
+        Cc._resolve_miss(failed_key, lambda: (_ for _ in ()).throw(Exception("db down")), 10)
+    assert Cc._l1_get(failed_key)[0] is None
     res = Cc._resolve_miss(f"cov-miss2-{time.time()}", lambda: {"v": 1}, 10)
     assert res == {"v": 1}
-    # concurrent: waited False -> direct fetch ok / fail
+    # concurrent: waited False -> direct fetch ok / fail (a failed fetch is a
+    # 5xx for the caller, never a false "not found" -> None, #301)
     fake_event = Mock(wait=Mock(return_value=False))
     with patch.object(Cc, "_acquire_inflight", return_value=(fake_event, False)):
         with patch.object(Cc, "_l1_get", return_value=(None, False)):
             assert Cc._resolve_miss("k-conc1", lambda: {"ok": 1}, 10) == {"ok": 1}
-            assert (
+            with pytest.raises(Exception, match="x"):
                 Cc._resolve_miss("k-conc2", lambda: (_ for _ in ()).throw(Exception("x")), 10)
-                is None
-            )
     # concurrent: waited True but cache empty -> direct fetch ok / fail
     fake_event2 = Mock(wait=Mock(return_value=True))
     with patch.object(Cc, "_acquire_inflight", return_value=(fake_event2, False)):
         with patch.object(Cc, "_l1_get", return_value=(None, False)):
             assert Cc._resolve_miss("k-conc3", lambda: {"ok": 2}, 10) == {"ok": 2}
-            assert (
+            with pytest.raises(Exception, match="x"):
                 Cc._resolve_miss("k-conc4", lambda: (_ for _ in ()).throw(Exception("x")), 10)
-                is None
-            )
     # concurrent: cached hit + negative sentinel
     with patch.object(
         Cc, "_acquire_inflight", return_value=(Mock(wait=Mock(return_value=True)), False)
