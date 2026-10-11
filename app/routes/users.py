@@ -265,5 +265,6 @@ def delete_user_endpoint(user_id):
         current_app.logger.info("Deleted user id=%s", user_id)
     except User.DoesNotExist:
         current_app.logger.warning("User not found for delete id=%s", user_id)
+        abort(404, description="Not found")
 
     return jsonify({}), 200

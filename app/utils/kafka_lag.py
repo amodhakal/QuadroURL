@@ -28,7 +28,7 @@ def snapshot(brokers=None):
         if cached and now - cached[0] < TTL:
             return cached[1]
         value = _probe(brokers, prefix)
-        _cache.clear()
+        _cache.pop(key, None)
         _cache[key] = (time.monotonic(), value)
         return value
 

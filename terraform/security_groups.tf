@@ -30,6 +30,10 @@ resource "aws_security_group" "ecs" {
   name   = "${var.project_name}-ecs-sg"
   vpc_id = aws_vpc.main.id
 
+  # Tasks live in private subnets and are reached only through the ALB. This
+  # rule is security-group referenced rather than CIDR based, so it keeps
+  # working after the move off the public subnets and grants nothing to the
+  # internet regardless of where the task ENI lives.
   ingress {
     from_port       = 8000
     to_port         = 8000
@@ -37,10 +41,51 @@ resource "aws_security_group" "ecs" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  # Egress to the in-VPC dependencies is declared explicitly so the required
+  # paths stay auditable. Scoping by port over the VPC CIDR rather than by
+  # security group avoids a reference cycle with the ingress rules on the
+  # db/redis/kafka groups, which already point back at this group.
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    from_port   = 6379
+    to_port     = 6379
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    from_port   = 9092
+    to_port     = 9092
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  # ECR, AWS APIs, and third-party services are only reachable via the NAT
+  # gateway, which is why this traffic exists at all in private subnets.
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 }

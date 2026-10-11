@@ -5,6 +5,7 @@ fetcher must implement its own DNS/IP pinning and redirect policy; this is not a
 network client for arbitrary URLs.
 """
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -18,6 +19,14 @@ from flask import abort, current_app
 
 _PROVIDER_URL = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
 _MAX_RESPONSE = 65536
+
+# Reputation verdicts are cached so a redirect is a cache read, not a
+# synchronous provider round trip.  Only the two definitive verdicts are
+# stored: "unavailable" describes a provider failure and is resolved by
+# SAFE_BROWSING_FAILURE_POLICY on every call, never pinned for an hour.
+_VERDICT_CACHE_PREFIX = "reputation:v1:"
+_CACHEABLE_VERDICTS = ("no_match", "unsafe")
+_DEFAULT_CACHE_TTL = 3600
 
 
 def validate_destination(value):
@@ -89,17 +98,76 @@ def _setting(name, default=""):
     return current_app.config.get(name, os.environ.get(name, default))
 
 
+def _verdict_cache_ttl():
+    """Verdict TTL in seconds; a non-positive value disables caching."""
+    try:
+        return int(_setting("SAFE_BROWSING_CACHE_TTL", _DEFAULT_CACHE_TTL))
+    except (TypeError, ValueError):
+        # A misspelled TTL must not silently disable the cache or crash a
+        # redirect; fall back to the documented default.
+        return _DEFAULT_CACHE_TTL
+
+
+def _verdict_cache_key(value):
+    """Key on a digest so raw destinations never reach Redis or the logs."""
+    return _VERDICT_CACHE_PREFIX + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _cached_verdict(key, ttl):
+    """Return a cached verdict from L1 then L2, or None on a genuine miss.
+
+    L1 is the same bounded per-process LRU the rest of the app uses, so the
+    redirect path keeps working (and keeps not re-blocking on the provider)
+    when Redis is unavailable.
+    """
+    from app import cache
+
+    verdict, _ = cache._l1_get(key)
+    if verdict in _CACHEABLE_VERDICTS:
+        return verdict
+    stored = cache._l2_safe(lambda client, k=key: client.get(k))
+    if stored in _CACHEABLE_VERDICTS:
+        cache._l1_set(key, stored, ttl)
+        return stored
+    return None
+
+
+def _store_verdict(key, verdict, ttl):
+    from app import cache
+
+    cache._l1_set(key, verdict, ttl)
+    cache._l2_fire_and_forget(lambda client, k=key, v=verdict, t=ttl: client.setex(k, t, v))
+
+
 def reputation_status(value):
     """Return disabled / no_match / unsafe / unavailable, never a 'safe' guarantee.
 
     Explicit opt-in sends the full destination (including its query) to Google.
     Fixed endpoint, no redirects/proxies/retries; bounded response and timeouts.
+    Verdicts (both safe and unsafe) are cached for SAFE_BROWSING_CACHE_TTL
+    seconds so the synchronous call happens on a cache miss only.
     """
     provider = _setting("SAFE_BROWSING_PROVIDER", "disabled")
     if provider == "disabled":
         return "disabled"
     if provider != "google" or not _setting("SAFE_BROWSING_API_KEY"):
         return "unavailable"
+
+    ttl = _verdict_cache_ttl()
+    key = _verdict_cache_key(value)
+    if ttl > 0:
+        cached = _cached_verdict(key, ttl)
+        if cached is not None:
+            return cached
+
+    verdict = _query_provider(value)
+    if ttl > 0 and verdict in _CACHEABLE_VERDICTS:
+        _store_verdict(key, verdict, ttl)
+    return verdict
+
+
+def _query_provider(value):
+    """Ask the provider once. Provider failures surface as "unavailable"."""
     payload = {
         "client": {"clientId": "quadrourl", "clientVersion": "1"},
         "threatInfo": {
@@ -151,7 +219,8 @@ def require_destination_safe(value):
     if status == "unsafe":
         abort(403, description="Destination blocked by reputation provider")
     if status == "unavailable":
-        # Misspelled or missing failure policies fail closed as well.
+        # A cached verdict is not a failure; only a real provider failure gets
+        # here.  Misspelled or missing failure policies fail closed as well.
         if _setting("SAFE_BROWSING_FAILURE_POLICY", "closed") != "open":
             abort(503, description="Destination reputation check unavailable")
         current_app.logger.warning("Reputation provider unavailable; configured fail-open policy")

@@ -131,9 +131,16 @@ def create_models(database):
         updated_at = DateTimeField(default=utcnow)
 
     class Event(BaseModel):
+        """One recorded interaction (click, create, ...) for a link.
+
+        Both foreign keys cascade, matching ``UrlEmbedding``/``LinkMetadata``:
+        the implicit default (NO ACTION) made deleting a user or a link raise
+        an IntegrityError instead of removing its events (#303).
+        """
+
         id = AutoField()
-        url = ForeignKeyField(Url, backref="events")
-        user = ForeignKeyField(User, backref="events")
+        url = ForeignKeyField(Url, backref="events", on_delete="CASCADE")
+        user = ForeignKeyField(User, backref="events", on_delete="CASCADE")
         event_type = CharField()
         is_trusted = BooleanField(default=False)
         source = CharField(max_length=64, default="")
@@ -173,7 +180,14 @@ def create_models(database):
     class ApiKey(BaseModel):
         id = AutoField()
         user = ForeignKeyField(User, backref="api_keys")
+        # ``key_hash`` is a slow, salted bcrypt digest. ``key_lookup`` is a
+        # deterministic HMAC-SHA256 of the raw key keyed with the app secret so
+        # verification stays a single indexed query instead of a table scan.
+        # ``key_prefix`` is the first few characters of the raw key, safe to show
+        # a user for identification.
         key_hash = CharField(unique=True)
+        key_prefix = CharField(max_length=8, null=True, default=None)
+        key_lookup = CharField(max_length=64, null=True, unique=True, default=None)
         name = CharField(default="")
         created_at = DateTimeField(default=utcnow)
         expires_at = DateTimeField(null=True, default=None)

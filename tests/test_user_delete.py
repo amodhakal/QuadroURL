@@ -44,7 +44,10 @@ def test_delete_user_with_urls_and_events(app, owner_client, sample_user):
     assert get_url_by_short_code("delme1") is None
 
 
-def test_delete_user_nonexistent(client):
+def test_delete_user_nonexistent(client, admin_client):
     response = client.delete("/users/99999")
     # Ownership is checked before existence for ordinary users.
     assert response.status_code == 404
+    # An administrator passes the ownership check, so the missing row itself
+    # must surface as a 404 rather than a 200 (#302).
+    assert admin_client.delete("/users/99999").status_code == 404
