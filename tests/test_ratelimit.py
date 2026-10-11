@@ -51,7 +51,9 @@ def _fresh_limiter(monkeypatch):
     """Reset the cached Lua script object and pin RATELIMIT_ENABLED=true."""
     monkeypatch.setattr(rl, "_script_obj", None)
     monkeypatch.setenv("RATELIMIT_ENABLED", "true")
+    rl.reset_local_buckets()
     yield
+    rl.reset_local_buckets()
 
 
 def _make_app(testing=False):
@@ -87,18 +89,131 @@ def test_allow_then_429_with_headers(_fresh_limiter, monkeypatch):
     assert limited.headers["X-RateLimit-Limit"] == "2"
 
 
-def test_fail_open_on_redis_exception(_fresh_limiter, monkeypatch):
+def test_local_fallback_enforces_limit_when_redis_errors(_fresh_limiter, monkeypatch):
+    """A Redis outage must not turn the limiter off (#300)."""
     monkeypatch.setattr(rl, "get_l2", lambda: FailingRedis())
-    response = _make_app().test_client().get("/ping")
-    assert response.status_code == 200
-    assert response.get_json() == {"ok": True}
+    client = _make_app().test_client()
+
+    assert client.get("/ping").status_code == 200
+    assert client.get("/ping").status_code == 200
+    limited = client.get("/ping")
+    assert limited.status_code == 429
+    assert limited.headers["X-RateLimit-Limit"] == "2"
 
 
-def test_fail_open_when_l2_unavailable(_fresh_limiter, monkeypatch):
+def test_local_fallback_enforces_limit_when_l2_unavailable(_fresh_limiter, monkeypatch):
     monkeypatch.setattr(rl, "get_l2", lambda: None)
+    client = _make_app().test_client()
+
+    statuses = [client.get("/ping").status_code for _ in range(3)]
+    assert statuses == [200, 200, 429]
+
+
+def test_fail_closed_is_the_default():
+    import inspect
+
+    assert inspect.signature(rl.rate_limit).parameters["fail_closed"].default is True
+
+
+def test_explicit_fail_open_still_allows_through(_fresh_limiter, monkeypatch):
+    monkeypatch.setattr(rl, "get_l2", lambda: None)
+
+    app = Flask(__name__)
+    app.config["TESTING"] = False
+
+    @app.route("/ping")
+    @rl.rate_limit(capacity=1, refill_rate=1.0, key_func=lambda: "open-key", fail_closed=False)
+    def ping():
+        return jsonify({"ok": True})
+
+    client = app.test_client()
+    assert [client.get("/ping").status_code for _ in range(3)] == [200, 200, 200]
+
+
+def test_503_when_local_fallback_cannot_be_built(_fresh_limiter, monkeypatch):
+    monkeypatch.setattr(rl, "get_l2", lambda: None)
+    monkeypatch.setattr(rl, "get_local_bucket", lambda *a, **kw: None)
+
     response = _make_app().test_client().get("/ping")
-    assert response.status_code == 200
-    assert response.get_json() == {"ok": True}
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "Rate limiter unavailable"
+
+
+def test_local_bucket_refills_over_time():
+    bucket = rl.LocalTokenBucket(capacity=2, refill_rate=1.0, ttl=60)
+    assert bucket.consume("k", now=0.0)[0] is True
+    assert bucket.consume("k", now=0.0)[0] is True
+    assert bucket.consume("k", now=0.0)[0] is False
+    assert bucket.consume("k", now=1.0)[0] is True
+
+
+def test_local_bucket_rejects_invalid_settings():
+    assert rl.get_local_bucket(0, 1.0) is None
+    assert rl.get_local_bucket(10, -1) is None
+
+
+def test_local_bucket_evicts_idle_keys():
+    bucket = rl.LocalTokenBucket(capacity=1, refill_rate=1.0, ttl=1)
+    for i in range(1100):
+        bucket.consume(f"key-{i}", now=float(i))
+    assert len(bucket._buckets) <= 1024
+
+
+def test_client_ip_ignores_forwarded_headers_without_trusted_proxies(_fresh_limiter):
+    from app.utils.request_ctx import get_client_ip
+
+    app = Flask(__name__)
+    app.config["TRUSTED_PROXY_COUNT"] = 0
+    with app.test_request_context(
+        "/",
+        environ_base={"REMOTE_ADDR": "10.0.0.7"},
+        headers={"X-Forwarded-For": "1.2.3.4, 5.6.7.8"},
+    ):
+        assert get_client_ip() == "10.0.0.7"
+
+
+@pytest.mark.parametrize(
+    "trusted,xff,expected",
+    [
+        (1, "1.2.3.4", "1.2.3.4"),
+        (1, "9.9.9.9, 1.2.3.4", "1.2.3.4"),
+        (2, "9.9.9.9, 1.2.3.4", "9.9.9.9"),
+    ],
+)
+def test_client_ip_uses_trusted_proxy_hops(trusted, xff, expected):
+    from app.utils.request_ctx import get_client_ip
+
+    app = Flask(__name__)
+    app.config["TRUSTED_PROXY_COUNT"] = trusted
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.7"}, headers={"X-Forwarded-For": xff}
+    ):
+        assert get_client_ip() == expected
+
+
+def test_client_ip_falls_back_to_remote_addr_on_short_chain():
+    from app.utils.request_ctx import get_client_ip
+
+    app = Flask(__name__)
+    app.config["TRUSTED_PROXY_COUNT"] = 2
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.7"}, headers={"X-Forwarded-For": "1.2.3.4"}
+    ):
+        assert get_client_ip() == "10.0.0.7"
+    with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.7"}):
+        assert get_client_ip() == "10.0.0.7"
+
+
+def test_client_ip_reads_trusted_proxy_count_from_env(monkeypatch):
+    from app.utils.request_ctx import get_client_ip
+
+    app = Flask(__name__)
+    app.config.pop("TRUSTED_PROXY_COUNT", None)
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
+    with app.test_request_context(
+        "/", environ_base={"REMOTE_ADDR": "10.0.0.7"}, headers={"X-Forwarded-For": "1.2.3.4"}
+    ):
+        assert get_client_ip() == "1.2.3.4"
 
 
 def test_disabled_via_env_bypass(_fresh_limiter, monkeypatch):

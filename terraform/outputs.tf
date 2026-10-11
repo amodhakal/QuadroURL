@@ -33,7 +33,17 @@ output "kafka_private_ip" {
   description = "Kafka broker private IP"
 }
 
-output "kafka_data_volume_id" {
-  value       = one([for d in aws_instance.kafka.ebs_block_device : d.volume_id if d.device_name == "/dev/xvdf"])
-  description = "EBS volume backing KAFKA_LOG_DIRS. Survives instance replacement (delete_on_termination=false); delete it by hand when the environment is retired."
+output "aws_region" {
+  value       = var.aws_region
+  description = "AWS region the stack is deployed into. Required by scripts/deploy.sh for ECR login and ECS calls."
+}
+
+output "alb_url" {
+  value       = "http://${aws_lb.main.dns_name}"
+  description = "Fully qualified application URL the load tester should target"
+}
+
+output "ecs_log_group_name" {
+  value       = aws_cloudwatch_log_group.ecs.name
+  description = "CloudWatch log group holding app and consumer container logs"
 }

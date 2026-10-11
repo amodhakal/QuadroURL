@@ -97,14 +97,19 @@ def configure_logging(app):
     app.logger.setLevel(log_level)
     app.logger.propagate = False
 
-    for name in ("", "werkzeug", "peewee"):
-        logger = logging.getLogger(name) if name else logging.getLogger()
-        if not logger.handlers:
-            logger.addHandler(json_handler)
-            logger.addHandler(list_handler)
-            logger.setLevel(log_level)
-            if name:
-                logger.propagate = False
+    # Root keeps propagate=True: it is the sink third-party libraries (kafka,
+    # urllib3, ...) already bubble into. Setting propagate=False here — or
+    # routing third-party loggers through their own non-propagating handlers —
+    # silently drops their warnings, so only the project's own loggers stop at
+    # their handlers. See #303.
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(json_handler)
+        root.addHandler(list_handler)
+        root.setLevel(log_level)
+
+    for name in ("werkzeug", "peewee"):
+        logging.getLogger(name).setLevel(log_level)
 
 
 class JSONFormatter(logging.Formatter):

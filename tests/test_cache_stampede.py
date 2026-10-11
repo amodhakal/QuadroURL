@@ -121,6 +121,60 @@ def test_negative_cache_has_short_ttl():
 
 
 # ---------------------------------------------------------------------------
+# Fetch errors are not cache misses (#301)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_error_propagates_and_is_not_negative_cached():
+    """A raising fetch must not be recorded as "key absent"."""
+    calls = []
+
+    def fetch_fn():
+        calls.append(1)
+        raise RuntimeError("db down")
+
+    with pytest.raises(RuntimeError):
+        cache._resolve_miss("test:fetch_error", fetch_fn, ttl=300)
+    assert cache._l1_get("test:fetch_error")[0] is None, "nothing may be cached"
+    assert cache._inflight == {}, "the inflight event must be released"
+
+    # The next caller must retry the fetch rather than see a cached 404.
+    with pytest.raises(RuntimeError):
+        cache._resolve_miss("test:fetch_error", fetch_fn, ttl=300)
+    assert len(calls) == 2
+
+
+def test_fetch_error_on_primary_surfaces_to_concurrent_caller():
+    """A waiter must not convert the primary's failure into a false miss."""
+    key = "test:fetch_error_concurrent"
+    fetch_started = threading.Event()
+    release_primary = threading.Event()
+    results = []
+
+    def fetch_fn():
+        fetch_started.set()
+        release_primary.wait(timeout=5)
+        raise RuntimeError("db down")
+
+    def waiter():
+        fetch_started.wait(timeout=5)
+        # The primary owns the inflight slot, so this call waits on its event.
+        with pytest.raises(RuntimeError):
+            cache._resolve_miss(key, fetch_fn, ttl=300)
+        results.append("raised")
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    with pytest.raises(RuntimeError):
+        cache._resolve_miss(key, fetch_fn, ttl=300)
+    release_primary.set()
+    thread.join(timeout=10)
+
+    assert results == ["raised"]
+    assert cache._l1_get(key)[0] is None
+
+
+# ---------------------------------------------------------------------------
 # Probabilistic early expiration (stale-while-revalidate)
 # ---------------------------------------------------------------------------
 
