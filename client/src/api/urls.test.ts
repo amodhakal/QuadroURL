@@ -83,6 +83,11 @@ describe("URL requests", () => {
     })
   })
 
+  it("surfaces a 404 when the URL to delete is already gone", async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: "Not found" }, 404))
+    await expect(deleteUrl(12)).rejects.toMatchObject({ name: "ApiError", status: 404 })
+  })
+
   it("resolves a short code", async () => {
     const result = { url: input.original_url, short_code: "abc123" }
     fetchMock.mockResolvedValueOnce(json(result))

@@ -28,7 +28,11 @@ from app.cache import (
 )
 from app.models.url import Url
 from app.utils.events import create_event
-from app.utils.kafka_producer import embed_url_best_effort, publish_url_create
+from app.utils.kafka_producer import (
+    ProducerBackpressureError,
+    embed_url_best_effort,
+    publish_url_create,
+)
 from app.utils.auth import require_auth, require_owner, scope_query, is_admin
 from flask import g
 from hashlib import sha256
@@ -169,7 +173,10 @@ def _idempotency_key(data):
 @require_auth
 def create_url():
     data = parse_body(UrlCreate)
-    user_id = data.get("user_id", g.current_user_id)
+    # ``or`` (not ``.get(key, default)``): an explicit ``"user_id": null`` is
+    # present-but-empty, so the caller is used rather than an authorization
+    # check against ``None`` (#302).
+    user_id = data.get("user_id") or g.current_user_id
     require_owner(user_id)
     original_url = data["original_url"]
     from app.utils.url_safety import require_destination_safe
@@ -214,6 +221,18 @@ def create_url():
                 "expires_at": expires_at.isoformat() if expires_at is not None else None,
             }
         )
+    except ProducerBackpressureError:
+        # The producer queue stayed full past KAFKA_PRODUCE_TIMEOUT: the
+        # request was not published. Surface a retryable 503 instead of a
+        # generic 500 (#302).
+        current_app.logger.warning(
+            "Kafka backpressure while publishing URL create; retryable 503",
+            exc_info=True,
+        )
+        response = jsonify({"error": "URL creation queue unavailable; retry shortly"})
+        response.status_code = 503
+        response.headers["Retry-After"] = "1"
+        return response
     except RuntimeError:
         # Short-code retries exhausted (sync fallback). Static message —
         # safe to surface via the 500 handler's intentional-message path.
@@ -508,6 +527,7 @@ def delete_url_endpoint(url_id):
         current_app.logger.info(f"Deleted URL id={url_id}")
     except Url.DoesNotExist:
         current_app.logger.warning(f"URL not found for delete id={url_id}")
+        abort(404, description="Not found")
 
     return jsonify({}), 200
 

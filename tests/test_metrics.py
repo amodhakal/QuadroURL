@@ -24,8 +24,8 @@ def _reset_store():
     ms.peak_active_requests = 0
 
 
-def test_get_metrics_endpoint(client):
-    response = client.get("/metrics")
+def test_get_metrics_endpoint(admin_client):
+    response = admin_client.get("/metrics")
     assert response.status_code == 200
     assert response.content_type == "application/json"
     data = response.get_json()
@@ -34,6 +34,23 @@ def test_get_metrics_endpoint(client):
     assert "cpu_percent" in data["system"]
     assert "system_ram" in data["system"]
     assert "process_memory_mb" in data["system"]
+
+
+def test_get_metrics_requires_admin(app, sample_user):
+    """Capacity and error-rate telemetry is operator-only (#302)."""
+    from app.utils.auth import issue_api_key
+
+    raw = app.test_client()
+    assert raw.get("/metrics").status_code == 401
+    assert raw.get("/metrics", headers={"Authorization": ""}).status_code == 401
+    assert raw.get("/metrics", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+    # Authenticated but not an administrator.
+    with app.app_context():
+        _, key = issue_api_key(sample_user.id)
+    member = app.test_client()
+    member.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {key}"
+    assert member.get("/metrics").status_code == 403
 
 
 def test_get_metrics_snapshot_empty():

@@ -469,7 +469,7 @@ def dashboard_stream():
         import time as _time
 
         from app.log_store import log_records, log_records_lock
-        from app.routes.metrics import get_metrics
+        from app.routes.metrics import collect_metrics
         from app.utils.kafka_lag import snapshot as lag_snapshot
 
         start = _time.monotonic()
@@ -477,7 +477,7 @@ def dashboard_stream():
             with log_records_lock:
                 logs = list(log_records)[-20:]
             payload = {
-                "metrics": get_metrics().get_json(),
+                "metrics": collect_metrics(),
                 "logs": logs,
                 "kafka_lag": lag_snapshot(),
             }
@@ -494,5 +494,8 @@ def dashboard_stream():
 
 
 @dashboard_bp.route("/dashboard")
+@require_admin
 def dashboard():
+    # The page itself names the internal stack and drives the metrics stream,
+    # so it carries the same admin gate as the stream (#302).
     return Response(DASHBOARD_HTML, content_type="text/html")
