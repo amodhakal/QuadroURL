@@ -153,7 +153,10 @@ def test_env_example_is_compose_ready_and_has_no_unused_database_url():
         values[key] = value
 
     assert values["GF_ADMIN_USER"] == "admin"
-    assert values["GF_ADMIN_PASSWORD"] == "local-only-change-me"
+    # #298: .env.example must not ship default credentials; values are
+    # supplied per-deployment (CI overrides them for `compose config`).
+    assert values["GF_ADMIN_PASSWORD"] == ""
+    assert values["DATABASE_PASSWORD"] == ""
     assert values["DISCORD_WEBHOOK_URL"] == ""
     assert values["APP_URL"] == "http://127.0.0.1:8000"
     assert "DATABASE_URL" not in values
