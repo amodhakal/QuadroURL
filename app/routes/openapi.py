@@ -297,7 +297,7 @@ def openapi():
 @docs_bp.get("/docs")
 @docs_bp.get("/api/v1/docs")
 def docs():
-    return Response(
+    response = Response(
         """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>quadroURL API docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -308,3 +308,11 @@ def docs():
 persistAuthorization:false,validatorUrl:null});</script></body></html>""",
         mimetype="text/html",
     )
+    # Overrides the app-wide deny-all default: Swagger UI pulls its CSS/JS
+    # from a CDN and runs an inline bootstrap script.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' https://cdn.jsdelivr.net"
+    )
+    return response
