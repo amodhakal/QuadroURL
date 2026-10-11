@@ -100,7 +100,9 @@ class UserUpdate(UserCreate):
 
 
 class UrlCreate(Body):
-    user_id: PositiveId = Field(default=None)
+    # Nullable so an explicit ``"user_id": null`` is accepted and falls back to
+    # the caller's own id at the route layer rather than aborting (#302).
+    user_id: PositiveId | None = Field(default=None)
     original_url: Text
     title: Annotated[str, StringConstraints(strict=True, max_length=255)]
     expires_at: datetime | None = None
@@ -146,7 +148,8 @@ class UrlUpdate(Body):
 
 class EventCreate(Body):
     url_id: PositiveId
-    user_id: PositiveId = Field(default=None)
+    # Nullable for the same reason as ``UrlCreate.user_id`` (#302).
+    user_id: PositiveId | None = Field(default=None)
     event_type: Text
     details: dict = Field(default_factory=dict)
 

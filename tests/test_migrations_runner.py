@@ -29,7 +29,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
-            "006_api_key_bcrypt",
+            "006_event_fk_cascade",
         ]
         assert applied(database) == {
             "001_canonical_schema",
@@ -37,7 +37,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
-            "006_api_key_bcrypt",
+            "006_event_fk_cascade",
         }
         assert discover()[0][0] == "001_canonical_schema"
 
@@ -49,7 +49,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
-            "006_api_key_bcrypt",
+            "006_event_fk_cascade",
         }
 
         # The schema is usable end to end.
@@ -76,7 +76,7 @@ def test_upgrade_applies_pending_migrations_in_order():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
-            "006_api_key_bcrypt",
+            "006_event_fk_cascade",
         }
         # A fresh database runs everything from scratch.
         fresh = SqliteDatabase(":memory:")
@@ -88,7 +88,7 @@ def test_upgrade_applies_pending_migrations_in_order():
                 "003_delivery",
                 "004_embeddings",
                 "005_security_data_foundation",
-                "006_api_key_bcrypt",
+                "006_event_fk_cascade",
             ]
 
 
@@ -197,14 +197,17 @@ def test_upgrade_repairs_legacy_request_ids_and_backfills_admin_membership(monke
         )
         monkeypatch.setenv("ADMIN_USER_IDS", f"{admin_id},not-an-id")
 
-        assert upgrade(database, models) == ["005_security_data_foundation", "006_api_key_bcrypt"]
+        assert upgrade(database, models) == [
+            "005_security_data_foundation",
+            "006_event_fk_cascade",
+        ]
         assert applied(database) == {
             "001_canonical_schema",
             "002_link_metadata",
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
-            "006_api_key_bcrypt",
+            "006_event_fk_cascade",
         }
         assert models.User.get_by_id(admin_id).is_admin is True
         assert models.User.get_by_id(other_id).is_admin is False

@@ -363,7 +363,10 @@ def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
     :param ttl: TTL for positive cache entries.
     :param negative_ttl: TTL for negative-cache entries.  Defaults to
                          ``_NEGATIVE_CACHE_TTL``.
-    :returns: The resolved value, or ``None`` if the record doesn't exist.
+    :returns: The resolved value, or ``None`` only when *fetch_fn* returned
+              ``None``, i.e. the key is genuinely absent.  An exception from
+              *fetch_fn* propagates to the caller: an unreachable database is a
+              5xx, not a "not found" (#301).
     """
     if negative_ttl is None:
         negative_ttl = _NEGATIVE_CACHE_TTL
@@ -380,6 +383,8 @@ def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
 
     if is_primary:
         try:
+            # A raising fetch_fn skips both writes below: nothing is cached, so
+            # the key stays a miss and the exception reaches the caller.
             value = fetch_fn()
             if value is None:
                 # Negative cache — store sentinel so subsequent lookups skip DB.
@@ -397,26 +402,17 @@ def _resolve_miss(key, fetch_fn, ttl, negative_ttl=None):
             _clear_inflight_event(key)
     else:
         # Concurrent caller — wait for the primary to finish, then read from cache.
-        # If the primary errored or the entry was evicted, fall back to a
-        # direct fetch instead of reporting a false 404 (#116).
-        waited = event.wait(timeout=30)
+        # A primary that raised leaves the key uncached (only a successful miss
+        # is negative-cached), so re-fetch directly instead of reporting a
+        # false 404 (#116).  If that fetch raises too, let the exception
+        # propagate rather than converting it into a false 404 (#301).
+        event.wait(timeout=30)
         cached, _ = _l1_get(key)
         if cached is not None:
             if cached is _NEGATIVE_SENTINEL:
                 return None
             return cached
-        if not waited:
-            # Primary timed out; do a direct fetch rather than misreporting.
-            try:
-                return fetch_fn()
-            except Exception:
-                return None
-        # Primary finished but cache is empty (error path) — try once directly.
-        try:
-            value = fetch_fn()
-        except Exception:
-            return None
-        return value
+        return fetch_fn()
 
 
 def _background_refresh(key, fetch_fn, ttl, negative_ttl=None):
@@ -444,6 +440,10 @@ def _background_refresh(key, fetch_fn, ttl, negative_ttl=None):
                 _l1_set(key, value, ttl)
                 payload = json.dumps(value, cls=_Encoder)
                 _l2_fire_and_forget(lambda client, k=key, p=payload, t=ttl: client.setex(k, t, p))
+        except Exception:
+            # Nothing is cached on failure; log it instead of swallowing it so
+            # a persistent fetch error is not mistaken for an absent key.
+            logger.exception("Background cache refresh failed for %s", key)
         finally:
             event.set()
             _clear_inflight_event(key)

@@ -131,9 +131,16 @@ def create_models(database):
         updated_at = DateTimeField(default=utcnow)
 
     class Event(BaseModel):
+        """One recorded interaction (click, create, ...) for a link.
+
+        Both foreign keys cascade, matching ``UrlEmbedding``/``LinkMetadata``:
+        the implicit default (NO ACTION) made deleting a user or a link raise
+        an IntegrityError instead of removing its events (#303).
+        """
+
         id = AutoField()
-        url = ForeignKeyField(Url, backref="events")
-        user = ForeignKeyField(User, backref="events")
+        url = ForeignKeyField(Url, backref="events", on_delete="CASCADE")
+        user = ForeignKeyField(User, backref="events", on_delete="CASCADE")
         event_type = CharField()
         is_trusted = BooleanField(default=False)
         source = CharField(max_length=64, default="")

@@ -245,9 +245,9 @@ def test_list_urls_cached_path(client, monkeypatch):
 def test_get_url_cached_404_and_error(client):
     r = client.get("/urls/99999999")
     assert r.status_code == 404
-    # delete returns 200 even when missing (covers except DoesNotExist)
+    # delete of a missing row is a 404 (covers except DoesNotExist) (#302)
     r = client.delete("/urls/99999999")
-    assert r.status_code == 200
+    assert r.status_code == 404
 
 
 def test_update_url_embeds_and_delete_flow(owner_client, sample_url, sample_user, monkeypatch):
@@ -474,24 +474,24 @@ def test_fail_token_and_enabled(monkeypatch, admin_client):
 # ---------------------------------------------------------------------------
 
 
-def test_metrics_branches(client, monkeypatch):
+def test_metrics_branches(admin_client, monkeypatch):
     import app.routes.prometheus as prom
 
     # warmed sampler path
     prom.CPU_USAGE.set(12.5)
     prom.MEMORY_USAGE_MB.set(100.0)
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     assert "cpu_percent" in r.get_json()["system"]
     # cold path with psutil working
     prom.CPU_USAGE.set(0.0)
     prom.MEMORY_USAGE_MB.set(0.0)
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     # psutil failure paths
     monkeypatch.setattr("psutil.Process", Mock(side_effect=Exception("no proc")))
     monkeypatch.setattr("psutil.virtual_memory", Mock(side_effect=Exception("no mem")))
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     body = r.get_json()
     assert body["system"]["process_memory_mb"] == 0.0
@@ -1170,31 +1170,28 @@ def test_cache_invalidation_and_scan(app, monkeypatch):
     e2, is_p2 = Cc._acquire_inflight(key)
     assert is_p2 is False
     Cc._clear_inflight_event(key)
-    # primary exception propagates
+    # primary exception propagates and is never negative-cached (#301)
+    failed_key = f"cov-miss-{time.time()}"
     with pytest.raises(Exception):
-        Cc._resolve_miss(
-            f"cov-miss-{time.time()}", lambda: (_ for _ in ()).throw(Exception("db down")), 10
-        )
+        Cc._resolve_miss(failed_key, lambda: (_ for _ in ()).throw(Exception("db down")), 10)
+    assert Cc._l1_get(failed_key)[0] is None
     res = Cc._resolve_miss(f"cov-miss2-{time.time()}", lambda: {"v": 1}, 10)
     assert res == {"v": 1}
-    # concurrent: waited False -> direct fetch ok / fail
+    # concurrent: waited False -> direct fetch ok / fail (a failed fetch is a
+    # 5xx for the caller, never a false "not found" -> None, #301)
     fake_event = Mock(wait=Mock(return_value=False))
     with patch.object(Cc, "_acquire_inflight", return_value=(fake_event, False)):
         with patch.object(Cc, "_l1_get", return_value=(None, False)):
             assert Cc._resolve_miss("k-conc1", lambda: {"ok": 1}, 10) == {"ok": 1}
-            assert (
+            with pytest.raises(Exception, match="x"):
                 Cc._resolve_miss("k-conc2", lambda: (_ for _ in ()).throw(Exception("x")), 10)
-                is None
-            )
     # concurrent: waited True but cache empty -> direct fetch ok / fail
     fake_event2 = Mock(wait=Mock(return_value=True))
     with patch.object(Cc, "_acquire_inflight", return_value=(fake_event2, False)):
         with patch.object(Cc, "_l1_get", return_value=(None, False)):
             assert Cc._resolve_miss("k-conc3", lambda: {"ok": 2}, 10) == {"ok": 2}
-            assert (
+            with pytest.raises(Exception, match="x"):
                 Cc._resolve_miss("k-conc4", lambda: (_ for _ in ()).throw(Exception("x")), 10)
-                is None
-            )
     # concurrent: cached hit + negative sentinel
     with patch.object(
         Cc, "_acquire_inflight", return_value=(Mock(wait=Mock(return_value=True)), False)
