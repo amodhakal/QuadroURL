@@ -119,7 +119,8 @@ def create_event():
     data = parse_body(EventCreate)
 
     url_id = data.get("url_id")
-    user_id = data.get("user_id", g.current_user_id)
+    # Explicit null falls back to the caller, matching POST /urls (#302).
+    user_id = data.get("user_id") or g.current_user_id
     require_owner(user_id)
     event_type = data.get("event_type")
     details = data.get("details", {})

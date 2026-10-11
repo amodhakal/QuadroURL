@@ -245,9 +245,9 @@ def test_list_urls_cached_path(client, monkeypatch):
 def test_get_url_cached_404_and_error(client):
     r = client.get("/urls/99999999")
     assert r.status_code == 404
-    # delete returns 200 even when missing (covers except DoesNotExist)
+    # delete of a missing row is a 404 (covers except DoesNotExist) (#302)
     r = client.delete("/urls/99999999")
-    assert r.status_code == 200
+    assert r.status_code == 404
 
 
 def test_update_url_embeds_and_delete_flow(owner_client, sample_url, sample_user, monkeypatch):
@@ -474,24 +474,24 @@ def test_fail_token_and_enabled(monkeypatch, admin_client):
 # ---------------------------------------------------------------------------
 
 
-def test_metrics_branches(client, monkeypatch):
+def test_metrics_branches(admin_client, monkeypatch):
     import app.routes.prometheus as prom
 
     # warmed sampler path
     prom.CPU_USAGE.set(12.5)
     prom.MEMORY_USAGE_MB.set(100.0)
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     assert "cpu_percent" in r.get_json()["system"]
     # cold path with psutil working
     prom.CPU_USAGE.set(0.0)
     prom.MEMORY_USAGE_MB.set(0.0)
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     # psutil failure paths
     monkeypatch.setattr("psutil.Process", Mock(side_effect=Exception("no proc")))
     monkeypatch.setattr("psutil.virtual_memory", Mock(side_effect=Exception("no mem")))
-    r = client.get("/metrics")
+    r = admin_client.get("/metrics")
     assert r.status_code == 200
     body = r.get_json()
     assert body["system"]["process_memory_mb"] == 0.0

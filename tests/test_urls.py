@@ -27,6 +27,40 @@ def test_create_url(owner_client, sample_user):
     assert len(data["short_code"]) == 6
 
 
+def test_create_url_null_user_id_falls_back_to_caller(owner_client, sample_user):
+    """An explicit ``"user_id": null`` acts as "me" rather than aborting (#302)."""
+    response = owner_client.post(
+        "/urls",
+        json={"user_id": None, "original_url": "https://example.com/null", "title": "Null"},
+    )
+    assert response.status_code == 201
+    assert response.get_json()["user_id"] == sample_user.id
+
+
+def test_create_url_kafka_backpressure_returns_503(owner_client, sample_user, monkeypatch):
+    """Producer backpressure is retryable, not a generic 500 (#302)."""
+    from app.utils.kafka_producer import ProducerBackpressureError
+    import app.routes.urls as urls_module
+
+    def _stall(_data):
+        raise ProducerBackpressureError("queue full")
+
+    monkeypatch.setattr(urls_module, "publish_url_create", _stall)
+    response = owner_client.post(
+        "/urls",
+        json={
+            "user_id": sample_user.id,
+            "original_url": "https://example.com/backpressure",
+            "title": "Stalled",
+        },
+    )
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    assert "error" in response.get_json()
+    # Nothing was persisted, so the caller can safely retry.
+    assert owner_client.get("/urls").get_json()["sample"] == []
+
+
 def test_create_url_generates_unique_short_codes(owner_client, sample_user):
     codes = set()
     for i in range(5):
@@ -335,8 +369,14 @@ def test_delete_url_existing(owner_client, sample_url):
 
 def test_delete_url_nonexistent(owner_client):
     response = owner_client.delete("/urls/99999")
-    assert response.status_code == 200
-    assert response.get_json() == {}
+    # A missing resource is a 404, not a 200 with an empty body (#302).
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Not found"}
+
+
+def test_delete_url_twice(owner_client, sample_url):
+    assert owner_client.delete(f"/urls/{sample_url.id}").status_code == 200
+    assert owner_client.delete(f"/urls/{sample_url.id}").status_code == 404
 
 
 def test_redirect_short_code_success(owner_client, sample_user):
