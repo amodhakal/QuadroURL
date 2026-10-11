@@ -2,6 +2,15 @@ resource "aws_security_group" "alb" {
   name   = "${var.project_name}-alb-sg"
   vpc_id = aws_vpc.main.id
 
+  # HTTPS: the only listener that reaches the application.
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTP: redirect to HTTPS only (see aws_lb_listener.http).
   ingress {
     from_port   = 80
     to_port     = 80
