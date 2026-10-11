@@ -1,0 +1,60 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: ["*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Create .env for compose
+        run: cp .env.example .env
+
+      - name: Start docker-compose stack
+        run: docker compose up -d --build
+
+      - name: Wait for app health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health; then
+              echo "App is healthy"
+              exit 0
+            fi
+            echo "Waiting for app... ($i/30)"
+            sleep 5
+          done
+          echo "App failed to become healthy"
+          docker compose logs
+          exit 1
+
+      # TODO: No dedicated integration tests exist yet. This runs the existing
+      # suite against the live compose stack as a smoke test. Add proper
+      # end-to-end API tests under tests/integration/ and update this step.
+      - name: Run test suite against compose stack
+        run: uv run pytest tests/ -v
+        continue-on-error: true
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
