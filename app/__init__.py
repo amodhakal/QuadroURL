@@ -200,6 +200,12 @@ def create_app():
     configure_logging(app)
     init_db(app)
 
+    from app.utils.ratelimit import warn_if_disabled
+    from app.utils.request_ctx import warn_if_proxy_untrusted
+
+    warn_if_disabled()
+    warn_if_proxy_untrusted()
+
     from app import models  # noqa: F401
 
     register_routes(app)
