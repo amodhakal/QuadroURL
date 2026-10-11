@@ -17,3 +17,9 @@ variable "fargate_task_count" {
   type    = number
   default = 4
 }
+
+variable "kafka_data_volume_size_gb" {
+  description = "Size of the gp3 volume backing the Kafka broker's KAFKA_LOG_DIRS. Must be large enough to hold the retained log across the retention window in kafka.tf."
+  type        = number
+  default     = 50
+}

@@ -32,3 +32,8 @@ output "kafka_private_ip" {
   value       = aws_instance.kafka.private_ip
   description = "Kafka broker private IP"
 }
+
+output "kafka_data_volume_id" {
+  value       = one([for d in aws_instance.kafka.ebs_block_device : d.volume_id if d.device_name == "/dev/xvdf"])
+  description = "EBS volume backing KAFKA_LOG_DIRS. Survives instance replacement (delete_on_termination=false); delete it by hand when the environment is retired."
+}
