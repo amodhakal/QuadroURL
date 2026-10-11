@@ -29,6 +29,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
+            "006_api_key_bcrypt",
         ]
         assert applied(database) == {
             "001_canonical_schema",
@@ -36,6 +37,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
+            "006_api_key_bcrypt",
         }
         assert discover()[0][0] == "001_canonical_schema"
 
@@ -47,6 +49,7 @@ def test_upgrade_creates_schema_and_records_history():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
+            "006_api_key_bcrypt",
         }
 
         # The schema is usable end to end.
@@ -73,6 +76,7 @@ def test_upgrade_applies_pending_migrations_in_order():
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
+            "006_api_key_bcrypt",
         }
         # A fresh database runs everything from scratch.
         fresh = SqliteDatabase(":memory:")
@@ -84,6 +88,7 @@ def test_upgrade_applies_pending_migrations_in_order():
                 "003_delivery",
                 "004_embeddings",
                 "005_security_data_foundation",
+                "006_api_key_bcrypt",
             ]
 
 
@@ -192,13 +197,14 @@ def test_upgrade_repairs_legacy_request_ids_and_backfills_admin_membership(monke
         )
         monkeypatch.setenv("ADMIN_USER_IDS", f"{admin_id},not-an-id")
 
-        assert upgrade(database, models) == ["005_security_data_foundation"]
+        assert upgrade(database, models) == ["005_security_data_foundation", "006_api_key_bcrypt"]
         assert applied(database) == {
             "001_canonical_schema",
             "002_link_metadata",
             "003_delivery",
             "004_embeddings",
             "005_security_data_foundation",
+            "006_api_key_bcrypt",
         }
         assert models.User.get_by_id(admin_id).is_admin is True
         assert models.User.get_by_id(other_id).is_admin is False
@@ -250,6 +256,56 @@ def test_upgrade_repairs_legacy_request_ids_and_backfills_admin_membership(monke
             )
 
 
+def test_upgrade_adds_api_key_lookup_columns_to_legacy_table():
+    """006 adds ``key_prefix``/``key_lookup`` without backfilling them.
+
+    Both columns derive from the raw key, which is never stored, so legacy rows
+    stay NULL — and therefore can never be matched by lookup, i.e. pre-migration
+    keys stop working. See ``migrations/006_api_key_bcrypt.py``.
+    """
+    from migrations_runner import upgrade
+
+    database = SqliteDatabase(":memory:")
+    models = _models(database)
+    with database:
+        _create_legacy_tables(database)
+        _mark_legacy_migrations(database)
+        user_id = database.execute_sql(
+            'INSERT INTO "user" (username, email, created_at) VALUES (?, ?, ?)',
+            ("legacy", "legacy@example.com", datetime(2026, 1, 1)),
+        ).lastrowid
+        legacy_id = database.execute_sql(
+            'INSERT INTO "apikey" (user_id, key_hash, name, created_at) VALUES (?, ?, ?, ?)',
+            (user_id, "a" * 64, "legacy key", datetime(2026, 1, 1)),
+        ).lastrowid
+
+        assert upgrade(database, models) == [
+            "005_security_data_foundation",
+            "006_api_key_bcrypt",
+        ]
+
+        columns = {column.name for column in database.get_columns("apikey")}
+        assert {"key_prefix", "key_lookup"} <= columns
+        # Not backfilled: the raw key is unrecoverable, so nothing is invented.
+        legacy = models.ApiKey.get_by_id(legacy_id)
+        assert legacy.key_hash == "a" * 64
+        assert legacy.key_prefix is None
+        assert legacy.key_lookup is None
+
+        # New keys do populate both, and key_lookup stays unique.
+        first = models.ApiKey.create(
+            user_id=user_id,
+            key_hash="b" * 60,
+            key_prefix="abcd1234",
+            key_lookup="c" * 64,
+        )
+        assert first.key_prefix == "abcd1234"
+        with pytest.raises(IntegrityError):
+            models.ApiKey.create(
+                user_id=user_id, key_hash="d" * 60, key_prefix="wxyz", key_lookup="c" * 64
+            )
+
+
 def test_fresh_schema_defaults_and_metadata():
     from migrations_runner import upgrade
     from shared.delivery_models import create_delivery_models
@@ -282,6 +338,8 @@ def test_fresh_schema_defaults_and_metadata():
         assert key.expires_at is None
         assert key.revoked_at is None
         assert key.last_used_at is None
+        assert key.key_prefix is None
+        assert key.key_lookup is None
         assert ("url", "event_type", "timestamp") in {
             fields for fields, _ in models.Event._meta.indexes
         }

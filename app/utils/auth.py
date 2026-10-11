@@ -5,6 +5,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from flask import abort, current_app, g, has_app_context, has_request_context, request, session
 from werkzeug.exceptions import HTTPException
 
@@ -14,6 +15,7 @@ DEFAULT_MAX_ACTIVE_API_KEYS = 10
 DEFAULT_SESSION_LIFETIME_HOURS = 8
 MAX_ACTIVE_API_KEYS = DEFAULT_MAX_ACTIVE_API_KEYS
 API_KEY_LAST_USED_THROTTLE_SECONDS = DEFAULT_LAST_USED_THROTTLE_SECONDS
+KEY_PREFIX_LENGTH = 8
 
 
 class ActiveApiKeyLimitReached(Exception):
@@ -46,9 +48,68 @@ def _config_int(names, default, minimum=1, maximum=2**31 - 1):
 
 
 def hash_key(raw):
+    """Return the bcrypt digest of ``raw``.
+
+    bcrypt is salted and deliberately slow, so the digest cannot be used to
+    *find* a key — only to verify one that has already been located. Use
+    :func:`key_lookup` for the indexed lookup and :func:`verify_key` to check.
+    """
     if not isinstance(raw, str):
         raise TypeError("API key must be text")
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+
+
+def verify_key(raw, digest):
+    """Constant-time check of ``raw`` against a stored bcrypt ``digest``.
+
+    Returns ``False`` (never raises) for malformed or missing digests so a
+    corrupt row can never authenticate and never leaks a stack trace.
+    """
+    if not isinstance(raw, str) or not isinstance(digest, str):
+        return False
+    try:
+        return bcrypt.checkpw(raw.encode("utf-8"), digest.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+def key_prefix(raw):
+    """Leading characters of ``raw``, safe to store and show for identification."""
+    if not isinstance(raw, str):
+        raise TypeError("API key must be text")
+    return raw[:KEY_PREFIX_LENGTH]
+
+
+def _lookup_secret():
+    """Key material for the deterministic API-key lookup HMAC.
+
+    Tied to the session secret so no new secret has to be provisioned; rotating
+    it invalidates issued keys exactly as it already invalidates sessions.
+    """
+    if has_app_context():
+        secret = current_app.config.get("SECRET_KEY")
+        if isinstance(secret, str) and secret:
+            return secret
+    for name in ("SESSION_SECRET", "SECRET_KEY"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    raise RuntimeError("A configured secret is required to derive API key lookups")
+
+
+def key_lookup(raw):
+    """Deterministic, secret-keyed index of ``raw`` (hex HMAC-SHA256).
+
+    Unlike the bcrypt digest this is stable for a given raw key, which is what
+    lets verification be a single indexed query. It is safe to store: an
+    attacker with the database still cannot check guessed keys without the
+    server-side secret, and the underlying HMAC is one-way regardless.
+    """
+    if not isinstance(raw, str):
+        raise TypeError("API key must be text")
+    return hmac.new(
+        _lookup_secret().encode("utf-8"), raw.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
 
 def _as_utc(value):
@@ -119,6 +180,8 @@ def issue_api_key(user_id, name="", expires_at=None, enforce_limit=True):
     values = {
         "user_id": user_id,
         "key_hash": hash_key(raw),
+        "key_prefix": key_prefix(raw),
+        "key_lookup": key_lookup(raw),
         "name": (name or "").strip(),
         "expires_at": normalized_expiry,
     }
@@ -190,8 +253,14 @@ def authenticate_bearer(raw):
     raw = raw.strip()
     if not raw or any(char.isspace() for char in raw):
         return None
-    record = ApiKey.get_or_none(ApiKey.key_hash == hash_key(raw))
+    try:
+        lookup = key_lookup(raw)
+    except RuntimeError:
+        return None
+    record = ApiKey.get_or_none(ApiKey.key_lookup == lookup)
     if record is None or not key_is_active(record):
+        return None
+    if not verify_key(raw, record.key_hash):
         return None
     try:
         User.get_by_id(record.user_id)
